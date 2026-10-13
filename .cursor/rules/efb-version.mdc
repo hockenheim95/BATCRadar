@@ -1,0 +1,9 @@
+---
+description: Always bump and tell the user the EFB version.
+globs:
+alwaysApply: true
+---
+
+When you change the EFB app (UI, map, server, navdata, traffic), increment `VERSION` (semver, currently `0.16.416`). The map shows `v…` bottom-center; `index.html` uses `{{VERSION}}` for cache-bust.
+
+In the user-facing reply, always state the new version, e.g. **v0.10.1**.

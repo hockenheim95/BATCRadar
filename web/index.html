@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html lang="de">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover"
+    />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="color-scheme" content="light" />
+    <meta name="efb-version" content="{{VERSION}}" />
+    <title>BATCRadar</title>
+    <link rel="stylesheet" href="vendor/leaflet/leaflet.css?v={{VERSION}}" />
+    <link rel="stylesheet" href="styles.css?v={{VERSION}}" />
+  </head>
+  <body>
+    <div id="map"></div>
+
+    <aside class="panel" id="panel" hidden>
+      <div class="panel-fit" id="panel-fit">
+      <div id="p-flight-body">
+        <div class="panel-carousel" id="panel-carousel">
+          <div class="panel-slide panel-slide--main">
+            <div class="mobile-sheet mobile-sheet--flight">
+            <div class="panel-head">
+              <div class="id-card">
+                <div class="logo-wrap" id="p-logo-wrap" hidden>
+                  <img id="p-logo" alt="Airline logo" hidden />
+                  <span class="logo-mark" id="p-logo-mark" hidden></span>
+                </div>
+                <div class="head-text">
+                  <div class="call-row">
+                    <div class="callsign" id="p-callsign">—</div>
+                    <span class="chip chip-type" id="p-type">—</span>
+                    <span class="chip chip-reg" id="p-reg">—</span>
+                  </div>
+                  <div class="head-sub">
+                    <div class="head-sub-text">
+                      <div class="airline-row">
+                        <div class="airline" id="p-airline">—</div>
+                      </div>
+                      <div class="typename" id="p-typename">—</div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <div class="live-meta" id="p-phase-phone" hidden></div>
+            </div>
+
+            <div class="route route-segment route-segment--top">
+              <div class="route-airports">
+                <div class="route-end route-end--origin">
+                  <div class="iata-stack">
+                    <div class="apt-wx" id="p-origin-wx"></div>
+                    <div class="iata" id="p-origin">—</div>
+                  </div>
+                  <div class="city" id="p-origin-name"></div>
+                  <div class="route-time route-time--phone route-time--dep">
+                    <strong id="p-dep-time-phone">—</strong>
+                  </div>
+                </div>
+                <div class="route-mid" id="p-route-mid">
+                  <span class="route-phase-sign" id="route-phase-sign" aria-hidden="true"></span>
+                </div>
+                <div class="route-end route-end--dest">
+                  <div class="iata-stack">
+                    <div class="apt-wx" id="p-dest-wx"></div>
+                    <div class="iata" id="p-dest">—</div>
+                  </div>
+                  <div class="city" id="p-dest-name"></div>
+                  <div class="route-time route-time--phone route-time--arr">
+                    <strong id="p-arr-time-phone">—</strong>
+                  </div>
+                </div>
+              </div>
+              <div class="route-times route-times--desk">
+                <div class="route-time route-time--dep">
+                  <span>Departure</span>
+                  <strong id="p-dep-time">—</strong>
+                </div>
+                <div class="route-times-mid"></div>
+                <div class="route-time route-time--arr">
+                  <span>Arrival</span>
+                  <strong id="p-arr-time">—</strong>
+                </div>
+              </div>
+            </div>
+
+            <div class="route route-segment route-segment--bottom">
+              <div class="progress" id="p-progress">
+                <div class="progress-meta">
+                  <span id="p-prog-left"></span>
+                  <span id="p-prog-right"></span>
+                </div>
+                <div class="progress-track"><i id="p-prog-fill"></i><span class="progress-dot" id="p-prog-dot" aria-hidden="true"></span></div>
+                <div class="route-plan" id="p-route-plan"></div>
+              </div>
+            </div>
+
+            <div class="stats">
+              <div>
+                <span>Altitude</span>
+                <strong id="p-alt">—</strong>
+              </div>
+              <div>
+                <span>Groundspeed</span>
+                <strong id="p-gs">—</strong>
+              </div>
+              <div>
+                <span>Heading</span>
+                <strong id="p-hdg">—</strong>
+              </div>
+              <div class="live-freq" id="p-freq-row">
+                <span>ATC Frequency</span>
+                <strong id="p-freq">—</strong>
+                <em id="p-freq-name"></em>
+              </div>
+              <div class="live-meta" id="p-phase" hidden></div>
+            </div>
+            </div>
+          </div>
+
+          <div class="panel-slide panel-slide--airport">
+            <div class="mobile-sheet mobile-sheet--airport">
+      <section class="apt-box" id="p-airport-body" hidden>
+        <div class="apt-box-head">
+          <div class="apt-box-banner" id="apt-box-banner">
+            <div class="apt-box-title" id="apt-box-title">—</div>
+            <div class="apt-box-local" id="apt-box-local" hidden></div>
+          </div>
+          <div class="apt-box-tabs" id="apt-box-tabs" hidden>
+            <button type="button" class="apt-tab is-active" data-tab="info">Operation</button>
+            <button type="button" class="apt-tab" data-tab="dep">
+              <span class="apt-tab-sign" data-flight-sign="departing" aria-hidden="true"></span>
+              <span>Departures</span>
+            </button>
+            <button type="button" class="apt-tab" data-tab="arr">
+              <span class="apt-tab-sign" data-flight-sign="approaching" aria-hidden="true"></span>
+              <span>Arrivals</span>
+            </button>
+          </div>
+        </div>
+        <div id="apt-box-details">
+        <div class="apt-box-place" id="apt-box-place">
+          <span class="apt-wx-ico" id="apt-place-wx" hidden></span>
+          <strong id="apt-place"></strong>
+          <em id="apt-icao"></em>
+        </div>
+        <div class="apt-box-grid" id="apt-box-grid">
+          <div>
+            <span>Wind</span>
+            <strong id="apt-wind">—</strong>
+          </div>
+          <div id="apt-qnh-cell">
+            <span>QNH</span>
+            <strong id="apt-qnh">—</strong>
+          </div>
+          <div>
+            <span>Temperature</span>
+            <strong id="apt-temp">—</strong>
+          </div>
+        </div>
+        <div class="apt-rwys" id="apt-box-rwys">
+          <div id="apt-dep-cell">
+            <span>Departure Runway</span>
+            <strong id="apt-dep">—</strong>
+          </div>
+          <div id="apt-arr-cell">
+            <span>Arrival Runway</span>
+            <strong id="apt-arr">—</strong>
+          </div>
+        </div>
+        <div class="apt-metar-text" id="apt-atis">—</div>
+        <div class="apt-wx-note" id="enr-wx-note" hidden></div>
+        </div>
+        <div class="apt-fids" id="enr-traffic" hidden>
+          <div class="apt-enr-traffic-label"><span>Traffic on Frequency</span></div>
+          <table>
+            <thead>
+              <tr>
+                <th></th>
+                <th>Flight</th>
+                <th>From</th>
+                <th>To</th>
+                <th>Distance</th>
+              </tr>
+            </thead>
+            <tbody id="enr-traffic-body"></tbody>
+          </table>
+        </div>
+        <div class="apt-fids" id="apt-fids" hidden>
+          <table>
+            <thead>
+              <tr>
+                <th></th>
+                <th>Flight</th>
+                <th id="fids-place-th">To</th>
+                <th>Time</th>
+                <th class="fids-gate">Gate</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody id="fids-body"></tbody>
+          </table>
+        </div>
+      </section>
+            </div>
+          </div>
+        </div>
+        <div class="panel-dots" id="panel-dots" aria-hidden="true">
+          <span class="panel-dot is-active"></span>
+          <span class="panel-dot"></span>
+        </div>
+      </div>
+      </div>
+
+    </aside>
+
+    <div class="chrome" id="chrome">
+      <button type="button" class="topbar-follow" id="btn-follow-me" aria-pressed="false">Follow me</button>
+      <div class="topbar">
+        <span class="mode unconnected" id="mode-badge">unconnected</span>
+        <div class="options" id="options">
+          <button type="button" id="btn-options">Options</button>
+          <div class="options-menu" id="options-menu" hidden>
+            <label class="opt-row">
+              Dark mode
+              <input type="checkbox" id="dark-mode" />
+            </label>
+            <label class="opt-row">
+              Map style
+              <select id="opt-map-style"></select>
+            </label>
+            <label class="opt-row">
+              Units
+              <select id="opt-units">
+                <option value="metric">Metric</option>
+                <option value="us">Imperial</option>
+                <option value="alternate">Alternating</option>
+              </select>
+            </label>
+            <label class="opt-row">
+              Rendering
+              <select id="opt-render">
+                <option value="standard" selected>Standard</option>
+                <option value="experimental">Experimental</option>
+              </select>
+            </label>
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+    <script src="vendor/leaflet/leaflet.js?v={{VERSION}}"></script>
+    <script src="js/01-icons.js?v={{VERSION}}"></script>
+    <script src="js/02-map.js?v={{VERSION}}"></script>
+    <script src="js/03-flightplan-routes.js?v={{VERSION}}"></script>
+    <script src="js/04-track-history.js?v={{VERSION}}"></script>
+    <script src="js/05-trail-altitude.js?v={{VERSION}}"></script>
+    <script src="js/06-theme.js?v={{VERSION}}"></script>
+    <script src="js/07-timezones.js?v={{VERSION}}"></script>
+    <script src="js/08-weather.js?v={{VERSION}}"></script>
+    <script src="js/09-flight-status.js?v={{VERSION}}"></script>
+    <script src="js/10-live-stats.js?v={{VERSION}}"></script>
+    <script src="js/11-fids-state.js?v={{VERSION}}"></script>
+    <script src="js/12-flight-sign.js?v={{VERSION}}"></script>
+    <script src="js/13-fids-board.js?v={{VERSION}}"></script>
+    <script src="js/14-airport-panel.js?v={{VERSION}}"></script>
+    <script src="js/15-tick.js?v={{VERSION}}"></script>
+    <script src="js/15a-motion.js?v={{VERSION}}"></script>
+    <script src="js/16-init.js?v={{VERSION}}"></script>
+    <script src="js/17-mobile-layout.js?v={{VERSION}}"></script>
+  </body>
+</html>

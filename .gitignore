@@ -1,0 +1,11 @@
+__pycache__/
+_ref_passenger_map/
+_ref_paxmap/
+*.pyc
+.venv/
+archive/
+data/tilecache/
+data/logocache/
+data/procs/
+.DS_Store
+Thumbs.db
