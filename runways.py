@@ -7,9 +7,10 @@ import io
 import json
 import threading
 import urllib.request
-from pathlib import Path
 
-CACHE = Path(__file__).resolve().parent / "data" / "runways.json"
+from paths import data_file
+
+CACHE = data_file("runways.json")
 SOURCE = "https://davidmegginson.github.io/ourairports-data/runways.csv"
 
 _lock = threading.Lock()
@@ -64,8 +65,9 @@ def _ensure() -> dict[str, dict[str, tuple[float, float, float]]]:
         with urllib.request.urlopen(SOURCE, timeout=40) as resp:
             blob = resp.read().decode("utf-8", "replace")
         parsed = _load_csv(blob)
-        CACHE.parent.mkdir(parents=True, exist_ok=True)
-        CACHE.write_text(json.dumps(parsed, separators=(",", ":")), encoding="utf-8")
+        data_file("runways.json", write=True).write_text(
+            json.dumps(parsed, separators=(",", ":")), encoding="utf-8"
+        )
         _by_airport = parsed
         print(f"  Runways: {len(parsed)} Airports gecacht.", flush=True)
         return _by_airport

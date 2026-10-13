@@ -9,3 +9,5 @@ data/logocache/
 data/procs/
 .DS_Store
 Thumbs.db
+build/
+dist/

@@ -7,9 +7,10 @@ import io
 import json
 import threading
 import urllib.request
-from pathlib import Path
 
-CACHE = Path(__file__).resolve().parent / "data" / "actypes.json"
+from paths import data_file
+
+CACHE = data_file("actypes.json")
 SRC = "https://opensky-network.org/datasets/metadata/doc8643AircraftTypes.csv"
 
 PREFERRED = {
@@ -114,8 +115,9 @@ def _download() -> None:
         with urllib.request.urlopen(SRC, timeout=40) as resp:
             blob = resp.read().decode("utf-8", "replace")
         parsed = _parse(blob)
-        CACHE.parent.mkdir(parents=True, exist_ok=True)
-        CACHE.write_text(json.dumps(parsed, separators=(",", ":")), encoding="utf-8")
+        data_file("actypes.json", write=True).write_text(
+            json.dumps(parsed, separators=(",", ":")), encoding="utf-8"
+        )
         with _lock:
             _apply(parsed)
         print(f"  Flugzeugtypen: {len(parsed)} Namen gecacht.", flush=True)

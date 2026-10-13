@@ -10,10 +10,11 @@ from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
-ROOT = Path(__file__).resolve().parent
-TILE_DIR = ROOT / "data" / "tilecache"
-LOGO_DIR = ROOT / "data" / "logocache"
-LOGO_OVERRIDE = ROOT / "data" / "logos"
+from paths import root
+
+TILE_DIR = root() / "data" / "tilecache"
+LOGO_DIR = root() / "data" / "logocache"
+LOGO_OVERRIDE = root() / "data" / "logos"
 OSM_URLS = (
     "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
     "https://tile.openstreetmap.de/{z}/{x}/{y}.png",

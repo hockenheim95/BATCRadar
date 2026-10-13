@@ -6,10 +6,11 @@ import csv
 import json
 import threading
 import urllib.request
-from pathlib import Path
 
-CACHE = Path(__file__).resolve().parent / "data" / "airlines.json"
-NAME_CACHE = Path(__file__).resolve().parent / "data" / "airline_names.json"
+from paths import data_file
+
+CACHE = data_file("airlines.json")
+NAME_CACHE = data_file("airline_names.json")
 SRC = "https://raw.githubusercontent.com/jpatokal/openflights/master/data/airlines.dat"
 
 _lock = threading.Lock()
@@ -70,9 +71,10 @@ def _parse(blob: str) -> tuple[dict[str, str], dict[str, str], dict[str, str]]:
 def _write_caches(
     iata_map: dict[str, str], names: dict[str, str], names_iata: dict[str, str]
 ) -> None:
-    CACHE.parent.mkdir(parents=True, exist_ok=True)
-    CACHE.write_text(json.dumps(iata_map, separators=(",", ":")), encoding="utf-8")
-    NAME_CACHE.write_text(
+    data_file("airlines.json", write=True).write_text(
+        json.dumps(iata_map, separators=(",", ":")), encoding="utf-8"
+    )
+    data_file("airline_names.json", write=True).write_text(
         json.dumps({"icao": names, "iata": names_iata}, separators=(",", ":")),
         encoding="utf-8",
     )

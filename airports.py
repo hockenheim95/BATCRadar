@@ -11,6 +11,8 @@ import threading
 import urllib.request
 from pathlib import Path
 
+from paths import data_file
+
 # icao: (iata, name, lat, lon, tz)
 AIRPORTS: dict[str, tuple[str, str, float, float, str]] = {
     "EDDF": ("FRA", "Frankfurt", 50.0379, 8.5622, "Europe/Berlin"),
@@ -303,8 +305,8 @@ _IATA_LOCK = threading.Lock()
 _IATA_BY_ICAO: dict[str, str] = {}
 _PLACES: dict[str, tuple[str, str, str, str]] = {}
 _IATA_READY = False
-_IATA_CACHE = Path(__file__).resolve().parent / "data" / "iata.json"
-_PLACES_CACHE = Path(__file__).resolve().parent / "data" / "places.json"
+_IATA_CACHE = data_file("iata.json")
+_PLACES_CACHE = data_file("places.json")
 _IATA_SRC = "https://davidmegginson.github.io/ourairports-data/airports.csv"
 
 _AIRPORT_TAIL = re.compile(
@@ -494,9 +496,10 @@ def _download_iata() -> None:
         with urllib.request.urlopen(_IATA_SRC, timeout=40) as resp:
             blob = resp.read().decode("utf-8", "replace")
         parsed, places = _parse_oa_csv(blob)
-        _IATA_CACHE.parent.mkdir(parents=True, exist_ok=True)
-        _IATA_CACHE.write_text(json.dumps(parsed, separators=(",", ":")), encoding="utf-8")
-        _PLACES_CACHE.write_text(
+        data_file("iata.json", write=True).write_text(
+            json.dumps(parsed, separators=(",", ":")), encoding="utf-8"
+        )
+        data_file("places.json", write=True).write_text(
             json.dumps({k: list(v) for k, v in places.items()}, separators=(",", ":")),
             encoding="utf-8",
         )

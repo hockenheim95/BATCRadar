@@ -7,6 +7,7 @@ import json
 import logging
 import os
 import socket
+import sys
 import threading
 import time
 from pathlib import Path
@@ -40,10 +41,11 @@ from track_store import TrackStore
 from weather import current as weather_current
 from weather import enroute as weather_enroute
 from weather import metar_raw as weather_metar
+from paths import bundle
 
 PORT = int(os.environ.get("EFB_PORT", "8080"))
-WEB_DIR = Path(__file__).resolve().parent / "web"
-VERSION_FILE = Path(__file__).resolve().parent / "VERSION"
+WEB_DIR = bundle() / "web"
+VERSION_FILE = bundle() / "VERSION"
 
 
 def current_version() -> str:
@@ -476,7 +478,7 @@ def main() -> None:
     print("  Traffic and ownship: BeyondATC (Port 41717). SimConnect only if BATC has no player.")
     print("  Asobo-Static bleibt draussen. Auch Flieger ausserhalb der Render-Distanz.")
     print()
-    print("  Strg+C zum Beenden.")
+    print("  Fenster offen lassen. Strg+C zum Beenden.")
     print()
     try:
         serve(app, host="0.0.0.0", port=PORT, threads=32, channel_timeout=30, ident="batcradar")
@@ -485,4 +487,11 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    finally:
+        if getattr(sys, "frozen", False):
+            try:
+                input("\n  Taste drücken zum Schließen.")
+            except EOFError:
+                pass

@@ -22,9 +22,11 @@ from SimConnect.Enum import (
 )
 from SimConnect.SimConnect import _library_path
 
-ROOT = Path(__file__).resolve().parent
+from paths import bundle, data_file, root
+
 DLL_CANDIDATES = [
-    ROOT / "native" / "SimConnect.dll",
+    bundle() / "native" / "SimConnect.dll",
+    root() / "native" / "SimConnect.dll",
     Path(r"D:\Users\Anwender\Documents\msfs\MSFS_Addons_Linker\Simconnect_2024\SimConnect.dll"),
     Path(r"D:\MSFS SDK\SimConnect SDK\lib\SimConnect.dll"),
     Path(_library_path),
@@ -60,7 +62,6 @@ DEF_FAC = 10
 REQ_FAC_BASE = 1000
 RECV_FACILITY_DATA = 28
 FAC_HEADER = 12 + 28  # SIMCONNECT_RECV + facility fields before Data
-NAMES_CACHE = ROOT / "data" / "msfs_names.json"
 
 
 class AircraftBlob(Structure):
@@ -225,15 +226,14 @@ class SimConnectBridge:
     @staticmethod
     def _load_names() -> dict[str, str]:
         try:
-            raw = json.loads(NAMES_CACHE.read_text(encoding="utf-8"))
+            raw = json.loads(data_file("msfs_names.json").read_text(encoding="utf-8"))
             return {str(k).upper(): str(v) for k, v in raw.items() if v}
         except Exception:
             return {}
 
     def _save_names(self) -> None:
         try:
-            NAMES_CACHE.parent.mkdir(parents=True, exist_ok=True)
-            NAMES_CACHE.write_text(
+            data_file("msfs_names.json", write=True).write_text(
                 json.dumps(self.airport_names, ensure_ascii=False, separators=(",", ":")),
                 encoding="utf-8",
             )

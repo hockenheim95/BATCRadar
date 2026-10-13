@@ -29,9 +29,9 @@ from pathlib import Path
 from SimConnect.Enum import SIMCONNECT_RECV, SIMCONNECT_RECV_ID, SIMCONNECT_RECV_EXCEPTION
 
 import simconnect_bridge as sb
+from paths import root
 
-ROOT = Path(__file__).resolve().parent
-CACHE_DIR = ROOT / "data" / "procs"
+CACHE_DIR = root() / "data" / "procs"
 _PKG_SUBS = ("Community", "Community2024", "Official2024", "Official2020")
 
 DEF_DEP = 40
