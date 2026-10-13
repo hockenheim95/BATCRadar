@@ -1,5 +1,36 @@
 let tickBusy = false;
 let lastBatcSession = 0;
+let lastTrafficSeq = 0;
+let lastTrafficAt = 0;
+const TRAFFIC_STALE_MS = 3500;
+
+function paintTrafficBadge(data) {
+  const badge = document.getElementById("mode-badge");
+  if (!badge) return;
+  const batcLive = data.trafficSource === "batc";
+  const seq = Number(data.trafficSeq) || 0;
+  const at = Number(data.trafficAt) || 0;
+  if (seq && seq !== lastTrafficSeq) {
+    lastTrafficSeq = seq;
+    lastTrafficAt = at || Date.now();
+  } else if (!lastTrafficAt && at) {
+    lastTrafficAt = at;
+  }
+  const stale =
+    batcLive && lastTrafficAt > 0 && Date.now() - lastTrafficAt > TRAFFIC_STALE_MS;
+  if (stale) {
+    badge.textContent = "stale";
+    badge.classList.toggle("live", false);
+    badge.classList.toggle("unconnected", false);
+    badge.classList.toggle("stale", true);
+    return;
+  }
+  badge.textContent = batcLive ? "LIVE" : "unconnected";
+  badge.classList.toggle("live", batcLive);
+  badge.classList.toggle("unconnected", !batcLive);
+  badge.classList.toggle("stale", false);
+}
+
 async function tick() {
   if (tickBusy || document.hidden) return;
   tickBusy = true;
@@ -10,11 +41,8 @@ async function tick() {
       const verMeta = document.querySelector('meta[name="efb-version"]');
       if (verMeta) verMeta.content = data.version;
     }
-    const badge = document.getElementById("mode-badge");
+    paintTrafficBadge(data);
     const batcLive = data.trafficSource === "batc";
-    badge.textContent = batcLive ? "LIVE" : "unconnected";
-    badge.classList.toggle("live", batcLive);
-    badge.classList.toggle("unconnected", !batcLive);
 
     const batcSession = Number(data.batcSession) || 0;
     if (batcSession !== lastBatcSession) {

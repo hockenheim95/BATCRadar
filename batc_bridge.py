@@ -14,6 +14,7 @@ BATC_WS = "ws://127.0.0.1:41717"
 BATC_ACARS = "http://127.0.0.1:57698"
 EXPIRE_S = 25.0
 WX_TTL = 2 * 60
+CONNECT_GRACE_S = 18.0
 STATIC_MARKERS = ("ASXGS", "ASXGA", "ASX", "STATIC")
 
 
@@ -54,6 +55,9 @@ class BatcBridge:
         self._gen = 0
         self._session = 0
         self._stop = False
+        self._connected_at = 0.0
+        self._last_aircraft_at = 0.0
+        self._ws = None
         self._async_loop: asyncio.AbstractEventLoop | None = None
         self._send_queue: asyncio.Queue[dict] | None = None
         threading.Thread(target=self._thread, daemon=True, name="batc").start()
@@ -78,6 +82,44 @@ class BatcBridge:
         """Increments on each websocket connect; 0 while disconnected."""
         with self._cond:
             return self._session if self.connected else 0
+
+    def aircraft_feed_age_s(self) -> float | None:
+        """Seconds since the last aircraft-update ingest; None if disconnected."""
+        with self._cond:
+            if not self.connected:
+                return None
+            now = time.monotonic()
+            if self._last_aircraft_at > 0:
+                return now - self._last_aircraft_at
+            if self._connected_at > 0:
+                return now - self._connected_at
+            return 0.0
+
+    def kick_if_stale(self, max_s: float) -> bool:
+        """Close the websocket when BATC stops pushing aircraft-update (zombie socket)."""
+        with self._cond:
+            if not self.connected:
+                return False
+            now = time.monotonic()
+            if self._last_aircraft_at > 0:
+                age = now - self._last_aircraft_at
+            elif self._connected_at > 0:
+                if now - self._connected_at < CONNECT_GRACE_S:
+                    return False
+                age = now - self._connected_at
+            else:
+                return False
+            if age < max_s:
+                return False
+            ws = self._ws
+            loop = self._async_loop
+        if ws is None or loop is None:
+            return False
+        try:
+            asyncio.run_coroutine_threadsafe(ws.close(), loop)
+        except RuntimeError:
+            return False
+        return True
 
     def wait_update(self, since: int, timeout: float) -> bool:
         """Block until a newer aircraft dump than *since*, or timeout / disconnect."""
@@ -147,6 +189,9 @@ class BatcBridge:
             with self._cond:
                 self.connected = False
                 self._planes.clear()
+                self._ws = None
+                self._connected_at = 0.0
+                self._last_aircraft_at = 0.0
                 self._cond.notify_all()
             time.sleep(2.0)
 
@@ -162,6 +207,9 @@ class BatcBridge:
                     self._planes.clear()
                     self.connected = True
                     self.last_error = ""
+                    self._connected_at = time.monotonic()
+                    self._last_aircraft_at = 0.0
+                    self._ws = ws
                     self._cond.notify_all()
                 try:
                     self._send_queue.put_nowait({"type": "aircraft-request"})
@@ -174,6 +222,9 @@ class BatcBridge:
             with self._cond:
                 self.connected = False
                 self._planes.clear()
+                self._ws = None
+                self._connected_at = 0.0
+                self._last_aircraft_at = 0.0
                 self._cond.notify_all()
 
     async def _recv(self, ws) -> None:
@@ -213,6 +264,7 @@ class BatcBridge:
             return
         rows = data.get("aircraft") or []
         with self._cond:
+            self._last_aircraft_at = now
             for row in rows:
                 if not isinstance(row, dict):
                     continue

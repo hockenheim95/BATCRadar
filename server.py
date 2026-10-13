@@ -10,6 +10,7 @@ import socket
 import sys
 import threading
 import time
+import traceback
 from pathlib import Path
 
 from flask import Flask, Response, request, send_from_directory
@@ -95,10 +96,12 @@ _HEAVY_KEYS = ("sidPath", "starPath")
 _wire: dict[str, bytes] = {}
 _paths: dict[str, dict] = {}
 BATC_REPLY_S = 1.0
+BATC_STALE_S = 12.0
 LIVE_MIN_CYCLE_S = 0.15
 OFFLINE_SLEEP_S = 0.25
 _batc_session = 0
 _batc_was_ok = False
+_traffic_seq = 0
 
 
 def _slim(plane: dict | None) -> dict | None:
@@ -195,129 +198,151 @@ def airport_payload(icao: str, aircraft: list[dict] | None = None, wx_pack: dict
 
 
 def sim_loop() -> None:
-    global _batc_session, _batc_was_ok
     while True:
-        t0 = time.monotonic()
-        if _batc.connected:
-            since = _batc.generation()
-            _batc.request_aircraft_refresh()
-            _batc.wait_update(since, BATC_REPLY_S)
+        try:
+            _sim_tick()
+        except Exception as exc:
+            print(f"  sim_loop error: {exc!r}", flush=True)
+            traceback.print_exc()
+            time.sleep(0.5)
 
-        sim_own, _, sim_ok, sim_error = _bridge.snapshot()
-        wx_pack = _bridge.weather_snapshot()
-        batc_ok, batc_rows, batc_error = _batc.snapshot()
 
-        others: list[dict] = []
-        player_raw = None
-        if batc_ok:
-            for raw in batc_rows:
-                if raw.get("isPlayer"):
-                    player_raw = raw
-                    continue
+def _sim_tick() -> None:
+    global _batc_session, _batc_was_ok, _traffic_seq
+    t0 = time.monotonic()
+    if _batc.connected:
+        since = _batc.generation()
+        _batc.request_aircraft_refresh()
+        _batc.wait_update(since, BATC_REPLY_S)
+        if _batc.kick_if_stale(BATC_STALE_S):
+            print("  BATC feed stale — reconnecting websocket", flush=True)
+
+    sim_own, _, sim_ok, sim_error = _bridge.snapshot()
+    wx_pack = _bridge.weather_snapshot()
+    batc_ok, batc_rows, batc_error = _batc.snapshot()
+
+    others: list[dict] = []
+    player_raw = None
+    if batc_ok:
+        for raw in batc_rows:
+            if raw.get("isPlayer"):
+                player_raw = raw
+                continue
+            try:
                 others.append(plane_from_batc(raw))
-            traffic_source = "batc"
-        else:
-            traffic_source = "none"
+            except Exception as exc:
+                print(f"  BATC plane skip: {exc!r}", flush=True)
+        traffic_source = "batc"
+    else:
+        traffic_source = "none"
 
-        ownship = None
-        if player_raw and player_raw.get("lat") is not None:
+    ownship = None
+    if player_raw and player_raw.get("lat") is not None:
+        try:
             ownship = plane_from_batc(player_raw)
             ownship["id"] = "ownship"
             ownship["isOwnship"] = True
-        elif sim_ok and sim_own:
-            ownship = plane_from_sim(sim_own, True)
+        except Exception as exc:
+            print(f"  BATC ownship skip: {exc!r}", flush=True)
+            ownship = None
+    elif sim_ok and sim_own:
+        ownship = plane_from_sim(sim_own, True)
 
-        if ownship:
-            snap_origin_to_field(ownship)
-            if not ownship.get("origin"):
-                near = nearest_airport(ownship.get("lat") or 0, ownship.get("lon") or 0)
-                if near:
-                    icao, iata, name, *_rest = near
-                    ownship["origin"] = icao
-                    ownship["originIata"] = iata
-                    ownship["originName"] = name
-            attach_gate(ownship)
-            normalize_ownship_gs(ownship)
-            attach_flight_iata(ownship)
-        for plane in others:
-            attach_gate(plane)
-            attach_flight_iata(plane)
+    if ownship:
+        snap_origin_to_field(ownship)
+        if not ownship.get("origin"):
+            near = nearest_airport(ownship.get("lat") or 0, ownship.get("lon") or 0)
+            if near:
+                icao, iata, name, *_rest = near
+                ownship["origin"] = icao
+                ownship["originIata"] = iata
+                ownship["originName"] = name
+        attach_gate(ownship)
+        normalize_ownship_gs(ownship)
+        attach_flight_iata(ownship)
+    for plane in others:
+        attach_gate(plane)
+        attach_flight_iata(plane)
 
-        apt_icao = ""
-        if ownship:
-            st = (ownship.get("state") or "").lower()
-            on_field = bool(ownship.get("onGround") or ownship.get("atDestination"))
-            if not on_field:
-                on_field = st in ("parked", "taxi", "pushback") or (
-                    float(ownship.get("gs") or 0) < 40 and float(ownship.get("alt") or 0) < 2500
-                )
-            if ownship.get("atDestination") and ownship.get("dest"):
-                apt_icao = (ownship.get("dest") or "").upper()
-            elif on_field:
-                apt_icao = (ownship.get("origin") or ownship.get("dest") or "").upper()
-            else:
-                apt_icao = (ownship.get("dest") or ownship.get("origin") or "").upper()
-        _bridge.set_metar_icao(apt_icao)
-        fleet = ([ownship] if ownship else []) + others
-        airport = airport_payload(apt_icao, fleet, wx_pack)
-
-        mode = "live" if ownship or batc_ok else "offline"
-        aircraft = fleet
-        batc_session = _batc.session() if batc_ok else 0
-        keep_tracks = set()
-        if ownship and ownship.get("source") != "batc" and ownship.get("id"):
-            keep_tracks.add(ownship["id"])
-        if batc_ok:
-            if _batc_session and batc_session != _batc_session:
-                _tracks.clear(keep_tracks)
-            _batc_session = batc_session
-            _batc_was_ok = True
-        elif _batc_was_ok:
-            _tracks.clear(keep_tracks)
-            _batc_was_ok = False
-        if mode == "live":
-            _tracks.touch_session()
-            for plane in aircraft:
-                _tracks.note_leg(plane["id"], plane.get("origin"), plane.get("dest"))
-                _tracks.add(
-                    plane["id"],
-                    plane["lat"],
-                    plane["lon"],
-                    bool(plane.get("onGround")),
-                    float(plane.get("alt") or 0),
-                    heading=float(plane.get("hdg") or 0),
-                    gs=float(plane.get("gs") or 0),
-                    dense=bool(plane.get("isOwnship")),
-                )
-                start_icao = _tracks.start_icao(plane["id"])
-                if start_icao:
-                    plane["trackStartIcao"] = start_icao
-                field_alt = _tracks.field_alt(plane["id"])
-                if field_alt is not None:
-                    plane["trackFieldAlt"] = field_alt
-            _tracks.keep_only({plane["id"] for plane in aircraft})
+    apt_icao = ""
+    if ownship:
+        st = (ownship.get("state") or "").lower()
+        on_field = bool(ownship.get("onGround") or ownship.get("atDestination"))
+        if not on_field:
+            on_field = st in ("parked", "taxi", "pushback") or (
+                float(ownship.get("gs") or 0) < 40 and float(ownship.get("alt") or 0) < 2500
+            )
+        if ownship.get("atDestination") and ownship.get("dest"):
+            apt_icao = (ownship.get("dest") or "").upper()
+        elif on_field:
+            apt_icao = (ownship.get("origin") or ownship.get("dest") or "").upper()
         else:
-            _tracks.maybe_reset()
-        try:
-            fids = _fids.update(fleet, ownship)
-        except Exception as exc:  # never let a board bug stop the sim loop
-            print(f"  fids error: {exc!r}", flush=True)
-            fids = {}
-        with _lock:
-            _state["mode"] = mode
-            _state["ownshipSource"] = ownship["source"] if ownship else "none"
-            _state["trafficSource"] = traffic_source
-            _state["batcSession"] = batc_session
-            _state["simError"] = batc_error or sim_error
-            _state["ownship"] = ownship
-            _state["aircraft"] = aircraft
-            _state["airport"] = airport
-            _state["version"] = current_version()
-            _state["fids"] = fids
-            _publish_wire()
-        leftover = (LIVE_MIN_CYCLE_S if batc_ok else OFFLINE_SLEEP_S) - (time.monotonic() - t0)
-        if leftover > 0:
-            time.sleep(leftover)
+            apt_icao = (ownship.get("dest") or ownship.get("origin") or "").upper()
+    _bridge.set_metar_icao(apt_icao)
+    fleet = ([ownship] if ownship else []) + others
+    airport = airport_payload(apt_icao, fleet, wx_pack)
+
+    mode = "live" if ownship or batc_ok else "offline"
+    aircraft = fleet
+    batc_session = _batc.session() if batc_ok else 0
+    keep_tracks = set()
+    if ownship and ownship.get("source") != "batc" and ownship.get("id"):
+        keep_tracks.add(ownship["id"])
+    if batc_ok:
+        if _batc_session and batc_session != _batc_session:
+            _tracks.clear(keep_tracks)
+        _batc_session = batc_session
+        _batc_was_ok = True
+    elif _batc_was_ok:
+        _tracks.clear(keep_tracks)
+        _batc_was_ok = False
+    if mode == "live":
+        _tracks.touch_session()
+        for plane in aircraft:
+            _tracks.note_leg(plane["id"], plane.get("origin"), plane.get("dest"))
+            _tracks.add(
+                plane["id"],
+                plane["lat"],
+                plane["lon"],
+                bool(plane.get("onGround")),
+                float(plane.get("alt") or 0),
+                heading=float(plane.get("hdg") or 0),
+                gs=float(plane.get("gs") or 0),
+                dense=bool(plane.get("isOwnship")),
+            )
+            start_icao = _tracks.start_icao(plane["id"])
+            if start_icao:
+                plane["trackStartIcao"] = start_icao
+            field_alt = _tracks.field_alt(plane["id"])
+            if field_alt is not None:
+                plane["trackFieldAlt"] = field_alt
+        _tracks.keep_only({plane["id"] for plane in aircraft})
+    else:
+        _tracks.maybe_reset()
+    try:
+        fids = _fids.update(fleet, ownship)
+    except Exception as exc:  # never let a board bug stop the sim loop
+        print(f"  fids error: {exc!r}", flush=True)
+        fids = {}
+    with _lock:
+        _state["mode"] = mode
+        _state["ownshipSource"] = ownship["source"] if ownship else "none"
+        _state["trafficSource"] = traffic_source
+        _state["batcSession"] = batc_session
+        _state["simError"] = batc_error or sim_error
+        _state["ownship"] = ownship
+        _state["aircraft"] = aircraft
+        _state["airport"] = airport
+        _state["version"] = current_version()
+        _state["fids"] = fids
+        _traffic_seq += 1
+        _state["trafficSeq"] = _traffic_seq
+        _state["trafficAt"] = int(time.time() * 1000)
+        _state["batcFeedAgeS"] = _batc.aircraft_feed_age_s()
+        _publish_wire()
+    leftover = (LIVE_MIN_CYCLE_S if batc_ok else OFFLINE_SLEEP_S) - (time.monotonic() - t0)
+    if leftover > 0:
+        time.sleep(leftover)
 
 
 app = Flask(__name__, static_folder=None)

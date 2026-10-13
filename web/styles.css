@@ -143,6 +143,12 @@ html.dark #map {
   color: #fff;
 }
 
+.mode.stale {
+  background: #d97706;
+  color: #fff;
+  text-transform: uppercase;
+}
+
 .options {
   position: relative;
 }

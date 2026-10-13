@@ -432,9 +432,13 @@ function reconFor(ac, spawn, sid, star) {
   return next;
 }
 
+let historyRun = 0;
+
 async function showHistory(ac) {
   if (!ac) return;
+  const run = ++historyRun;
   const watching = ac.id;
+  const seq = histSeq;
   const hereAlt = Number(ac.alt);
   const latest = typeof motionById !== "undefined" ? motionById.get(ac.id)?.samples?.slice(-1)[0] : null;
   const here =
@@ -442,7 +446,7 @@ async function showHistory(ac) {
       ? [latest.lat, latest.lon, Number.isFinite(latest.alt) ? latest.alt : Number.isFinite(hereAlt) ? hereAlt : null]
       : [ac.lat, ac.lon, Number.isFinite(hereAlt) ? hereAlt : null];
   const fetched = await fetchTrack(ac.id, Boolean(ac.isOwnship));
-  if (trailAcId !== watching) return;
+  if (run !== historyRun || trailAcId !== watching || seq !== histSeq) return;
   const live = mergeTrackPts(fetched.pts.slice(), localTracks.get(ac.id) || [], here);
   if (!live.length) live.push(here.slice());
   const spawn = spawnOf(fetched.first, live);
