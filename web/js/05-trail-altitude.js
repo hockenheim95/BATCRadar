@@ -153,6 +153,11 @@ function liveBlendNm(pts, startIdx) {
   return Math.min(20, Math.max(5, total * 0.38));
 }
 
+function smoothstep(t) {
+  const x = Math.max(0, Math.min(1, t));
+  return x * x * (3 - 2 * x);
+}
+
 function blendAltsFrom(pts, startIdx, fromMsl, blendNm) {
   if (!pts || startIdx >= pts.length || !Number.isFinite(fromMsl) || !(blendNm > 0)) return;
   let nm = 0;
@@ -164,18 +169,42 @@ function blendAltsFrom(pts, startIdx, fromMsl, blendNm) {
       continue;
     }
     if (nm >= blendNm) break;
-    const t = nm / blendNm;
-    const s = t * t * (3 - 2 * t);
+    const s = smoothstep(nm / blendNm);
     pts[i][2] = fromMsl + (measured - fromMsl) * s;
   }
+}
+
+/** Pull the last recon segment toward the first live altitude so color does not step at the layer join. */
+function blendReconTailToLive(pts, reconCount, targetMsl, blendNm) {
+  if (reconCount < 2 || reconCount >= pts.length || !Number.isFinite(targetMsl) || !(blendNm > 0)) return;
+  let nm = 0;
+  for (let i = reconCount - 1; i >= 0; i -= 1) {
+    const cur = ptAlt(pts[i]);
+    if (!Number.isFinite(cur)) continue;
+    if (i < reconCount - 1) nm += (kmBetween(pts[i], pts[i + 1]) || 0) / 1.852;
+    if (nm > blendNm) break;
+    const w = smoothstep(1 - nm / blendNm);
+    pts[i][2] = cur + (targetMsl - cur) * w;
+  }
+}
+
+function seamBlendNm(pts, reconCount) {
+  const liveNm = liveBlendNm(pts, reconCount);
+  let reconTail = 0;
+  for (let i = reconCount - 1; i >= 1; i -= 1) {
+    reconTail += (kmBetween(pts[i - 1], pts[i]) || 0) / 1.852;
+  }
+  return Math.min(28, Math.max(liveNm, reconTail * 0.55, 8));
 }
 
 function assignTrailAlts(pts, ac, reconCount) {
   if (!pts.length) return;
   const liveStart = Math.min(pts.length, Math.max(0, reconCount));
   const field = fieldElevOf(ac, pts.slice(liveStart));
+  const measuredLive = [];
+  for (let i = reconCount; i < pts.length; i += 1) measuredLive[i] = ptAlt(pts[i]);
   const join =
-    ptAlt(pts[liveStart]) ??
+    measuredLive[liveStart] ??
     ptAlt(pts[pts.length - 1]) ??
     Number(ac && ac.alt) ??
     field;
@@ -183,13 +212,18 @@ function assignTrailAlts(pts, ac, reconCount) {
   const hereAlt = Number(ac && ac.alt);
   let last = reconCount > 0 ? ptAlt(pts[Math.max(0, reconCount - 1)]) : null;
   for (let i = reconCount; i < pts.length; i += 1) {
-    if (ptAlt(pts[i]) == null) pts[i][2] = last != null ? last : hereAlt;
+    const m = measuredLive[i];
+    if (m != null) pts[i][2] = m;
+    else if (ptAlt(pts[i]) == null) pts[i][2] = last != null ? last : hereAlt;
     last = ptAlt(pts[i]);
   }
-  const seamIdx = reconCount > 0 ? Math.max(0, reconCount - 1) : 0;
-  const seamAlt = ptAlt(pts[seamIdx]) ?? join;
-  if (Number.isFinite(seamAlt) && liveStart < pts.length) {
-    blendAltsFrom(pts, liveStart, seamAlt, liveBlendNm(pts, liveStart));
+  if (reconCount > 0 && liveStart < pts.length) {
+    const seamNm = seamBlendNm(pts, reconCount);
+    const seamIdx = Math.max(0, reconCount - 1);
+    const seamAlt = ptAlt(pts[seamIdx]) ?? join;
+    const liveTarget = measuredLive[liveStart] ?? ptAlt(pts[liveStart]) ?? join;
+    if (Number.isFinite(liveTarget)) blendReconTailToLive(pts, reconCount, liveTarget, seamNm);
+    if (Number.isFinite(seamAlt)) blendAltsFrom(pts, liveStart, ptAlt(pts[seamIdx]) ?? seamAlt, seamNm);
   }
   if (Number.isFinite(hereAlt)) pts[pts.length - 1][2] = hereAlt;
 }

@@ -414,7 +414,6 @@ function buildRecon(ac, spawn, sid, star) {
   pts[pts.length - 1] = a.slice();
   if (pts.length > 2) pts = smoothPath(pts, ac);
   pts[pts.length - 1] = a.slice();
-  assignTrailAlts(pts, ac, pts.length);
   if (ptAlt(a) != null) pts[pts.length - 1][2] = ptAlt(a);
   return pts;
 }
@@ -465,8 +464,16 @@ async function showHistory(ac) {
       ? [tip.lat, tip.lon, Number.isFinite(tip.alt) ? tip.alt : here[2]]
       : here;
   appendHere(livePts, tipPt);
-  assignTrailAlts(livePts, ac, 0);
-  setTrail(recon ? recon.pts : [], livePts, ac, recon ? recon.key : `live:${ac.id}`);
+  const reconPts = recon && recon.pts.length ? recon.pts : null;
+  if (reconPts && livePts.length) {
+    const combined = reconPts.concat(livePts.slice(1));
+    assignTrailAlts(combined, ac, reconPts.length);
+    for (let i = 0; i < reconPts.length; i += 1) reconPts[i] = combined[i];
+    livePts = combined.slice(reconPts.length - 1);
+  } else {
+    assignTrailAlts(livePts, ac, 0);
+  }
+  setTrail(reconPts || [], livePts, ac, recon ? recon.key : `live:${ac.id}`);
 }
 
 function nearestOnPath(path, here) {
