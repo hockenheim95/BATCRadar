@@ -218,7 +218,6 @@ async function tick() {
       showHistory(histAc);
     }
     if (typeof prefetchVisibleTracks === "function") prefetchVisibleTracks(data.aircraft);
-    if (typeof refreshTrafficJoinMarkers === "function") refreshTrafficJoinMarkers(data.aircraft);
     if (typeof ensurePaintMotion === "function") ensurePaintMotion();
   } finally {
     tickBusy = false;

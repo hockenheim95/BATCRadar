@@ -216,29 +216,29 @@ function paintHistoryFrom(ac, fetched, here) {
   }
   livePts = deduped;
   if (reconPts.length && livePts.length) livePts[0] = reconPts[reconPts.length - 1].slice();
-  if (typeof clipPtsBehindPose === "function") livePts = clipPtsBehindPose(livePts, ac);
-  const tip = typeof displayedPoseOf === "function" ? displayedPoseOf(ac) : null;
-  const tipPt =
-    tip && Number.isFinite(tip.lat) && Number.isFinite(tip.lon)
-      ? [tip.lat, tip.lon, Number.isFinite(tip.alt) ? tip.alt : here[2]]
-      : here;
-  appendHere(livePts, tipPt);
+  // Signature from stored points only — animated tip stays on trailLive via nudgeLiveTrail,
+  // so we must not rebuild the whole coloured polyline every motion tick.
+  const liveSig = typeof liveSigOf === "function" ? liveSigOf(livePts) : "";
+  let paintLive = livePts;
+  if (typeof clipPtsBehindPose === "function") {
+    paintLive = clipPtsBehindPose(
+      livePts.map((p) => p.slice()),
+      ac
+    );
+  }
   const reconCount = reconPts.length;
-  const combined = reconCount ? reconPts.concat(livePts.slice(1)) : livePts;
+  const combined = reconCount ? reconPts.concat(paintLive.slice(1)) : paintLive;
   assignTrailAlts(combined, ac, reconCount);
   const reconOut = reconCount ? combined.slice(0, reconCount) : [];
   const liveOut = combined.slice(reconCount ? reconCount - 1 : 0);
-  const joinPt = reconOut.length
-    ? reconOut[reconOut.length - 1].slice()
-    : liveOut[0]
-      ? liveOut[0].slice()
-      : null;
   const head = reconOut[0];
   const tail = reconOut.length ? reconOut[reconOut.length - 1] : null;
   const pathKey = tail
     ? `${ac.id}:${reconOut.length}:${head[0]},${head[1]}:${tail[0]},${tail[1]}`
     : `${ac.id}:0`;
-  setTrail(reconOut, liveOut, ac, pathKey, joinPt);
+  setTrail(reconOut, liveOut, ac, pathKey, liveSig);
+  const pose = typeof displayedPoseOf === "function" ? displayedPoseOf(ac) : null;
+  if (typeof nudgeLiveTrail === "function" && pose) nudgeLiveTrail(ac, pose);
 }
 
 async function showHistory(ac) {

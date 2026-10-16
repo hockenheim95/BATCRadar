@@ -26,9 +26,6 @@ LIVE_SLIDE_KM = 8.0
 SID_TAIL_IGNORE_KM = 2.8
 SID_TAIL_HOOK_KM = 8.0
 SID_TAIL_HOOK_DEG = 50.0
-ENROUTE_TRIM_OK_DEG = 40.0
-ENROUTE_TRIM_MAX_KM = 20.0
-ENROUTE_TRIM_MAX_PTS = 8
 
 _recon_prefix: dict[str, list[list[float]]] = {}
 _recon_frozen: set[str] = set()
@@ -572,52 +569,6 @@ def _needs_recon(
     return True
 
 
-def _procedure_near_spawn(spawn: list[float], sid: list, star: list) -> bool:
-    """True when firstSeen is on/near published SID or STAR geometry."""
-    sid_pts = [p[:] for p in (sid or []) if p]
-    star_pts = [p[:] for p in (star or []) if p]
-    if len(sid_pts) > 1 and (_nearest_on_path(sid_pts, spawn)[0] or 1e9) < PHASE_NEAR_KM:
-        return True
-    if len(star_pts) > 1 and (_nearest_on_path(star_pts, spawn)[0] or 1e9) < PHASE_NEAR_KM:
-        return True
-    return False
-
-
-def _enroute_join_heading(spawn: dict, inbound_brg: float | None) -> float | None:
-    hdg = spawn.get("hdg")
-    if hdg is not None:
-        return float(hdg) % 360.0
-    return inbound_brg
-
-
-def _trim_enroute_live_head(
-    spawn: list[float],
-    tail: list[list[float]],
-    ref_hdg: float | None,
-) -> list[list[float]]:
-    """Drop early live points that disagree with spawn heading (enroute join only)."""
-    if ref_hdg is None or len(tail) < 2:
-        return tail
-    rest = [p[:] for p in tail[1:]]
-    if not rest:
-        return tail
-    skipped = 0
-    max_dist = 0.0
-    while rest:
-        brg = _bearing(spawn, rest[0])
-        if _heading_diff(brg, ref_hdg) <= ENROUTE_TRIM_OK_DEG:
-            break
-        dist = _km2(spawn, rest[0]) or 0.0
-        max_dist = max(max_dist, dist)
-        skipped += 1
-        if skipped >= ENROUTE_TRIM_MAX_PTS or max_dist >= ENROUTE_TRIM_MAX_KM:
-            break
-        rest.pop(0)
-    if not rest:
-        rest = [tail[-1][:]]
-    return [tail[0][:]] + rest
-
-
 def _build_recon_prefix(plane: dict, sid: list, star: list, recon_from: dict) -> list[list[float]]:
     spawn = _spawn_ll(recon_from)
     hdg = recon_from.get("hdg")
@@ -625,8 +576,6 @@ def _build_recon_prefix(plane: dict, sid: list, star: list, recon_from: dict) ->
     sid = [p[:] for p in (sid or []) if p]
     star = [p[:] for p in (star or []) if p]
     if not _needs_recon(plane, recon_from, spawn, sid):
-        return []
-    if not _procedure_near_spawn(spawn, sid, star):
         return []
 
     pts = _departure_part(plane, spawn, sid, hdg_f)
@@ -743,17 +692,6 @@ def combined_trail(
     tail = _live_from_spawn(live, recon_from)
     prefix = recon_prefix_for(aid, plane, paths, recon_from) if plane else []
     dest = _spawn_pt(recon_from)
-    sid = paths.get("sidPath") or []
-    star = paths.get("starPath") or []
-    spawn_ll = _spawn_ll(recon_from)
-    inbound: float | None = None
-    if len(prefix) >= 2:
-        inbound = _bearing(prefix[-2], prefix[-1])
-    elif len(tail) >= 2:
-        inbound = _bearing(tail[0], tail[1])
-    if not _procedure_near_spawn(spawn_ll, sid, star):
-        ref = _enroute_join_heading(recon_from, inbound)
-        tail = _trim_enroute_live_head(dest, tail, ref)
     if not prefix:
         if tail:
             tail[0] = dest

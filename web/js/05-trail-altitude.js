@@ -276,106 +276,16 @@ function liveSigOf(pts) {
   if (!pts || !pts.length) return "0";
   const n = pts.length;
   const a = pts[0];
-  const b = n > 2 ? pts[n - 2] : a;
+  const b = pts[n - 1];
   return `${n}:${a[0]},${a[1]}:${b[0]},${b[1]}`;
 }
 
-// TEMP(DEBUG): recon/live join marker — remove DEBUG_TRAIL_JOIN block when done.
-const DEBUG_TRAIL_JOIN = true;
-let trailJoinDebugMarker = null;
-const trafficJoinMarkers = new Map();
-let trafficJoinRun = 0;
-
-function clearTrafficJoinMarkers() {
-  for (const layer of trafficJoinMarkers.values()) map.removeLayer(layer);
-  trafficJoinMarkers.clear();
-}
-
-async function refreshTrafficJoinMarkers(aircraft) {
-  if (!DEBUG_TRAIL_JOIN) {
-    clearTrafficJoinMarkers();
-    return;
-  }
-  const run = ++trafficJoinRun;
-  const want = new Set();
-  const cap = TOUCH_UI ? 12 : 20;
-  let n = 0;
-  for (const ac of aircraft || []) {
-    if (n >= cap) break;
-    if (!ac || !ac.id || ac.isOwnship || !ac.trackReady || !ac.trackAirborne) continue;
-    if (ac.id === trailAcId) continue;
-    if (typeof mapVisible === "function" && !mapVisible(ac)) continue;
-    n += 1;
-    want.add(ac.id);
-    if (typeof fetchTrack !== "function") continue;
-    const tk = await fetchTrack(ac.id, false);
-    if (run !== trafficJoinRun) return;
-    const join = tk.reconFrom || null;
-    if (!join || !Number.isFinite(join.lat) || !Number.isFinite(join.lon)) continue;
-    const latLng = [join.lat, join.lon];
-    let layer = trafficJoinMarkers.get(ac.id);
-    if (!layer) {
-      layer = L.circleMarker(latLng, {
-        radius: 5,
-        color: "#ffffff",
-        weight: 1,
-        fillColor: "#dc2626",
-        fillOpacity: 0.92,
-        interactive: false,
-        zIndexOffset: 2400,
-      }).addTo(map);
-      trafficJoinMarkers.set(ac.id, layer);
-    } else {
-      layer.setLatLng(latLng);
-    }
-  }
-  if (run !== trafficJoinRun) return;
-  for (const [id, layer] of trafficJoinMarkers) {
-    if (!want.has(id)) {
-      map.removeLayer(layer);
-      trafficJoinMarkers.delete(id);
-    }
-  }
-}
-
-function clearTrailJoinDebug() {
-  if (!trailJoinDebugMarker) return;
-  map.removeLayer(trailJoinDebugMarker);
-  trailJoinDebugMarker = null;
-}
-
-function setTrailJoinDebug(pt) {
-  if (!DEBUG_TRAIL_JOIN) {
-    clearTrailJoinDebug();
-    return;
-  }
-  if (!pt || !Number.isFinite(pt[0]) || !Number.isFinite(pt[1])) {
-    clearTrailJoinDebug();
-    return;
-  }
-  const latLng = [pt[0], pt[1]];
-  if (!trailJoinDebugMarker) {
-    trailJoinDebugMarker = L.circleMarker(latLng, {
-      radius: 7,
-      color: "#ffffff",
-      weight: 2,
-      fillColor: "#dc2626",
-      fillOpacity: 1,
-      interactive: false,
-      zIndexOffset: 2500,
-    }).addTo(map);
-  } else {
-    trailJoinDebugMarker.setLatLng(latLng);
-  }
-}
-
-function setTrail(reconPts, livePts, ac, reconKey, joinPt) {
+function setTrail(reconPts, livePts, ac, reconKey, stableLiveSig) {
   const recon = reconPts || [];
   const live = livePts || [];
-  setTrailJoinDebug(joinPt);
   const field = fieldElevOf(ac, live.length ? live : recon);
   const key = reconKey || "";
-  const sig = liveSigOf(live);
+  const sig = stableLiveSig != null ? stableLiveSig : liveSigOf(live);
   const reconChanged = paintedReconKey !== key;
   const liveChanged = paintedLiveSig !== sig;
   if (!reconChanged && !liveChanged) return;
@@ -394,7 +304,6 @@ function hideHistory() {
   trail.clearLayers();
   if (typeof trailLiveGroup !== "undefined") trailLiveGroup.clearLayers();
   if (typeof trailLive !== "undefined") trailLive.setLatLngs([]);
-  clearTrailJoinDebug();
   paintedReconKey = null;
   paintedLiveSig = "";
   trailAcId = null;
@@ -406,7 +315,6 @@ function armTrail(ac) {
     trail.clearLayers();
     if (typeof trailLiveGroup !== "undefined") trailLiveGroup.clearLayers();
     if (typeof trailLive !== "undefined") trailLive.setLatLngs([]);
-    clearTrailJoinDebug();
     paintedReconKey = null;
     paintedLiveSig = "";
     histSeq += 1;

@@ -9,11 +9,18 @@ import time
 OWN_MAX_POINTS = 1600
 OWN_KEEP_TAIL = 400
 AI_MAX_POINTS = 600
-AI_KEEP_TAIL = 80
+AI_KEEP_TAIL = 120
 OWN_MIN_DT = 0.8
 OWN_MIN_MOVE = 0.00035
+# AI live trail: one vertex roughly every AI_SAMPLE_SEC of ground track,
+# clamped so approach stays denser and cruise stays sparse.
+AI_MIN_KM = 0.08
 AI_CRUISE_KM = 3.0
-AI_TERM_KM = 0.5
+AI_SAMPLE_SEC = 10.0
+# Taxi (on ground / ≤35 kt): sparse on straights, densify on heading turns.
+AI_TAXI_KT = 35.0
+AI_TAXI_KM = 0.5
+AI_TAXI_HDG_DEG = 10.0
 AI_HDG_DEG = 4.0
 AI_ALT_FT = 800.0
 AI_MAX_DT = 8.0
@@ -22,6 +29,25 @@ GLITCH_KM = 12.0
 SESSION_GRACE = 25.0
 TRACK_GRACE = 40.0
 PARK_KM = 0.012
+
+
+def _is_taxi(on_ground: bool, gs_kt: float) -> bool:
+    return bool(on_ground) or float(gs_kt) <= AI_TAXI_KT
+
+
+def _ai_need_km(gs_kt: float, on_ground: bool = False) -> float:
+    """Min distance for a new AI track point (taxi uses turn gating instead)."""
+    if _is_taxi(on_ground, gs_kt):
+        return AI_TAXI_KM
+    spaced = max(0.0, float(gs_kt)) * 1.852 * (AI_SAMPLE_SEC / 3600.0)
+    return max(AI_MIN_KM, min(AI_CRUISE_KM, spaced))
+
+
+def _path_turn_deg(buf: list[list[float]], lat: float, lon: float) -> float:
+    """Turn at the last vertex toward (lat, lon); 0 if not enough points."""
+    if len(buf) < 2:
+        return 0.0
+    return _turn_deg(buf[-2], buf[-1], [lat, lon])
 
 
 def _airport_at(lat: float, lon: float) -> str:
@@ -219,12 +245,24 @@ class TrackStore:
                 elif not dense and buf:
                     prev_hdg = prev[3] if prev else None
                     d_alt = abs(alt_ft - float(last[2] if len(last) > 2 else alt_ft))
-                    terminal = on_ground or gs_kt < 250.0 or alt_ft < 12000.0
-                    need_km = AI_TERM_KM if terminal else AI_CRUISE_KM
+                    taxi = _is_taxi(on_ground, gs_kt)
+                    need_km = _ai_need_km(gs_kt, on_ground)
+                    if taxi:
+                        # Geometry turn vs last edge — stamp heading slides each tick
+                        # and would miss gradual taxiway bends.
+                        if len(buf) >= 2:
+                            hdg_lim = AI_TAXI_HDG_DEG
+                            hdg_delta = _path_turn_deg(buf, lat, lon)
+                        else:
+                            hdg_lim = AI_TAXI_HDG_DEG
+                            hdg_delta = _hdg_delta(prev_hdg, hdg)
+                    else:
+                        hdg_lim = AI_HDG_DEG
+                        hdg_delta = _hdg_delta(prev_hdg, hdg)
                     dt = now - prev[0] if prev else 1e9
                     if (
                         jump < need_km
-                        and _hdg_delta(prev_hdg, hdg) < AI_HDG_DEG
+                        and hdg_delta < hdg_lim
                         and d_alt < AI_ALT_FT
                         and dt < AI_MAX_DT
                     ):
