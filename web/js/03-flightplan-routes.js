@@ -28,39 +28,11 @@ function fmtDur(ms) {
   return `00:${String(m).padStart(2, "0")}`;
 }
 
-const ARR_ETA_WINDOW_MS = 30 * 60 * 1000;
-const ARR_ON_TIME_MAX_DELAY_MS = 5 * 60 * 1000;
-const ARR_DELAY_ROUND_MS = 5 * 60 * 1000;
-const ARR_ETA_MIN_GS_KT = 60;
-
-function estimateArrEtaMs(ac, now) {
-  const dest = destLL(ac);
-  if (!dest || !Number.isFinite(ac.lat) || !Number.isFinite(ac.lon)) return null;
-  const remain = kmBetween([ac.lat, ac.lon], dest);
-  if (remain == null) return null;
-  const gs = Number(ac.gs) || 0;
-  if (gs < ARR_ETA_MIN_GS_KT) return null;
-  const speedKmh = gs * 1.852;
-  if (speedKmh < 1) return null;
-  return now + (remain / speedKmh) * 3600 * 1000;
-}
-
-/** Minutes late vs STA from ETA (same rules as fids.py); uses FIDS latch when present. */
-function arrDelayMinutes(ac, now) {
-  if (typeof fidsArrLate !== "undefined") {
-    const latched = fidsArrLate.get(ac.id);
-    if (latched != null) return latched;
-  }
-  const st = (ac.state || "").toLowerCase();
-  const airborne = !ac.onGround && !["parked", "taxi", "pushback", "player"].includes(st);
-  if (!airborne) return null;
-  const eta = estimateArrEtaMs(ac, now);
-  if (eta == null || eta - now > ARR_ETA_WINDOW_MS) return null;
-  const sta = parseBatcZForAc(ac, ac.timeTo);
-  if (!sta) return null;
-  const delayMs = eta - sta.getTime();
-  if (delayMs <= ARR_ON_TIME_MAX_DELAY_MS) return null;
-  return Math.round(delayMs / ARR_DELAY_ROUND_MS) * (ARR_DELAY_ROUND_MS / 60000);
+/** Arrival delay minutes from server FIDS board latch (fids.py). */
+function arrDelayMinutes(ac) {
+  if (typeof fidsArrLate === "undefined") return null;
+  const latched = fidsArrLate.get(ac.id);
+  return latched != null ? latched : null;
 }
 
 function planBit(text) {
@@ -124,7 +96,7 @@ function setProgress(ac) {
   if (arr && arr.getTime() > now) right += right ? ` · in ${fmtDur(arr.getTime() - now)}` : "";
   else if (arr) {
     right += right ? " · delayed" : "delayed";
-    const late = arrDelayMinutes(ac, now);
+    const late = arrDelayMinutes(ac);
     if (late != null) right += ` +${late}`;
   }
   setText("p-prog-left", left);
@@ -255,6 +227,25 @@ function atDestField(ac) {
   return (kmBetween([ac.lat, ac.lon], dest) || 99) < 8;
 }
 
+function destRouteEndpointsMatch(pts, dest, lat, lon) {
+  if (!pts || pts.length < 2) return false;
+  const a = pts[0];
+  const b = pts[pts.length - 1];
+  return (
+    Math.abs(a.lat - dest[0]) < 1e-6 &&
+    Math.abs(a.lng - dest[1]) < 1e-6 &&
+    Math.abs(b.lat - lat) < 1e-6 &&
+    Math.abs(b.lng - lon) < 1e-6
+  );
+}
+
+function applyDestRouteLine(line, dest, lat, lon) {
+  const pairs =
+    typeof directDestRoutePts === "function" ? directDestRoutePts(dest, lat, lon) : [dest, [lat, lon]];
+  if (typeof writeLineLatLngs === "function") writeLineLatLngs(line, pairs);
+  else line.setLatLngs(pairs);
+}
+
 /** Hide direct-to-dest line once rolling has finished and ground ops begin at destination. */
 function hideDestRouteAtDest(ac) {
   if (!ac || !atDestField(ac)) return false;
@@ -278,17 +269,8 @@ function setRoute(line, ac) {
     }
   }
   const pts = line.getLatLngs();
-  if (
-    pts &&
-    pts.length === 2 &&
-    Math.abs(pts[0].lat - dest[0]) < 1e-7 &&
-    Math.abs(pts[0].lng - dest[1]) < 1e-7 &&
-    Math.abs(pts[1].lat - lat) < 1e-7 &&
-    Math.abs(pts[1].lng - lon) < 1e-7
-  ) {
-    return;
-  }
-  line.setLatLngs([dest, [lat, lon]]);
+  if (destRouteEndpointsMatch(pts, dest, lat, lon)) return;
+  applyDestRouteLine(line, dest, lat, lon);
 }
 
 function syncRoutes(ac) {
@@ -302,8 +284,6 @@ function syncRoutes(ac) {
 }
 
 const trackCache = new Map();
-const reconById = new Map();
-const LOCAL_TRACK_MAX = TOUCH_UI ? 280 : 900;
 let histSeq = 0;
 let paintedReconKey = null;
 let paintedLiveSig = "";

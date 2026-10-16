@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import threading
 
 from actypes import name_of as actype_name_lookup
 from airlines import iata_of as airline_iata_lookup
@@ -163,7 +164,115 @@ def _tz_portugal(lat: float | None, lon: float | None) -> str:
         return "Atlantic/Madeira"
     return "Europe/Lisbon"
 
-def apply_flightplan(plane: dict, origin: str, dest: str, extra: dict | None = None) -> None:
+_fp_lock = threading.Lock()
+_path_geom_cache: dict[tuple, dict] = {}
+
+
+def flightplan_path_key(origin: str, dest: str, plane: dict, extra: dict | None) -> tuple:
+    o = (origin or plane.get("origin") or "").upper()
+    d = (dest or plane.get("dest") or "").upper()
+    ex = extra or {}
+    sid = str(ex.get("sid") or plane.get("sid") or "")
+    star = str(ex.get("star") or plane.get("star") or "")
+    dep = str(ex.get("depRunway") or plane.get("depRunway") or "")
+    arr = str(ex.get("arrRunway") or plane.get("arrRunway") or "")
+    geo = ""
+    if o and not dep:
+        lat = plane.get("lat")
+        lon = plane.get("lon")
+        if lat is not None and lon is not None:
+            geo = f"{round(float(lat), 2)}:{round(float(lon), 2)}"
+    return (o, d, sid, star, dep, arr, geo)
+
+
+def clear_flightplan_path_cache() -> None:
+    with _fp_lock:
+        _path_geom_cache.clear()
+
+
+def _compute_flightplan_paths(
+    plane: dict, origin: str, dest: str, extra: dict | None
+) -> dict:
+    out: dict = {
+        "depRwyLat": None,
+        "depRwyLon": None,
+        "depRwyHdg": None,
+        "depRwyEndLat": None,
+        "depRwyEndLon": None,
+        "sidPath": [],
+        "starPath": [],
+    }
+    if not extra:
+        return out
+    lat = plane.get("lat")
+    lon = plane.get("lon")
+    hdg = plane.get("hdg")
+    dep_rwy = extra.get("depRunway") or plane.get("depRunway") or ""
+    start, far = runway_pair(origin, dep_rwy, hdg, lat, lon)
+    if not start:
+        rwy = runway_end(origin, dep_rwy, hdg, lat, lon)
+        if rwy:
+            start = ("", rwy[0], rwy[1], rwy[2])
+    if start:
+        out["depRwyLat"], out["depRwyLon"], out["depRwyHdg"] = start[1], start[2], start[3]
+    if far:
+        out["depRwyEndLat"], out["depRwyEndLon"] = far[1], far[2]
+    path = sid_points(
+        origin,
+        extra.get("sid") or plane.get("sid") or "",
+        dep_rwy,
+        lat,
+        lon,
+        hdg,
+    )
+    if path:
+        out["sidPath"] = path
+    arrival = star_points(
+        dest,
+        extra.get("star") or plane.get("star") or "",
+        extra.get("arrRunway") or plane.get("arrRunway") or "",
+        lat,
+        lon,
+        hdg,
+    )
+    if arrival:
+        out["starPath"] = arrival
+    return out
+
+
+def ensure_flightplan_paths(
+    plane: dict,
+    origin: str = "",
+    dest: str = "",
+    extra: dict | None = None,
+) -> None:
+    """SID/STAR geometry from cache; recompute only when the flight-plan key changes."""
+    o = origin or plane.get("origin") or ""
+    d = dest or plane.get("dest") or ""
+    ex = extra if extra is not None else plane
+    key = flightplan_path_key(o, d, plane, ex)
+    with _fp_lock:
+        geom = _path_geom_cache.get(key)
+        if geom is None:
+            geom = _compute_flightplan_paths(plane, o, d, ex)
+            _path_geom_cache[key] = geom
+    for field, val in geom.items():
+        if field.startswith("depRwy") and val is None:
+            continue
+        if val:
+            plane[field] = val
+        elif field in ("sidPath", "starPath"):
+            plane.pop(field, None)
+
+
+def apply_flightplan(
+    plane: dict,
+    origin: str,
+    dest: str,
+    extra: dict | None = None,
+    *,
+    paths: bool = False,
+) -> None:
     if origin:
         plane.update(place_or_empty(origin, "origin"))
     if dest:
@@ -176,42 +285,11 @@ def apply_flightplan(plane: dict, origin: str, dest: str, extra: dict | None = N
             plane["onGround"] = bool(extra.get("onGround"))
         if "atDestination" in extra:
             plane["atDestination"] = bool(extra.get("atDestination"))
-        lat = plane.get("lat")
-        lon = plane.get("lon")
-        hdg = plane.get("hdg")
-        dep_rwy = extra.get("depRunway") or plane.get("depRunway") or ""
-        start, far = runway_pair(origin, dep_rwy, hdg, lat, lon)
-        if not start:
-            rwy = runway_end(origin, dep_rwy, hdg, lat, lon)
-            if rwy:
-                start = ("", rwy[0], rwy[1], rwy[2])
-        if start:
-            plane["depRwyLat"], plane["depRwyLon"], plane["depRwyHdg"] = start[1], start[2], start[3]
-        if far:
-            plane["depRwyEndLat"], plane["depRwyEndLon"] = far[1], far[2]
-        path = sid_points(
-            origin,
-            extra.get("sid") or plane.get("sid") or "",
-            dep_rwy,
-            lat,
-            lon,
-            hdg,
-        )
-        if path:
-            plane["sidPath"] = path
-        arrival = star_points(
-            dest,
-            extra.get("star") or plane.get("star") or "",
-            extra.get("arrRunway") or plane.get("arrRunway") or "",
-            lat,
-            lon,
-            hdg,
-        )
-        if arrival:
-            plane["starPath"] = arrival
+    if paths and extra:
+        ensure_flightplan_paths(plane, origin, dest, extra)
 
 
-def plane_from_batc(raw: dict) -> dict:
+def plane_from_batc(raw: dict, *, paths: bool = False) -> dict:
     icao_type = infer_type(raw.get("type") or "", raw.get("livery") or "")
     cat, scale = style_for(icao_type)
     length = float(raw.get("lengthMeters") or 0)
@@ -254,7 +332,7 @@ def plane_from_batc(raw: dict) -> dict:
         "arrRunway": str(raw.get("arrRunway") or ""),
         "title": raw.get("livery") or "",
     }
-    apply_flightplan(plane, raw.get("icaoFrom") or "", raw.get("icaoTo") or "", raw)
+    apply_flightplan(plane, raw.get("icaoFrom") or "", raw.get("icaoTo") or "", raw, paths=paths)
     snap_origin_to_field(plane)
     return plane
 

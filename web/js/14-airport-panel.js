@@ -49,22 +49,22 @@ function fillPanelHead(ac) {
   setAirlineLogo(ac);
 }
 
-function rwyJoin(list) {
-  return list && list.length ? list.join(", ") : "—";
-}
-
 function paintAirportRwys(apt) {
   const rwys = document.getElementById("apt-box-rwys");
   const depCell = document.getElementById("apt-dep-cell");
   const arrCell = document.getElementById("apt-arr-cell");
+  const dep = apt?.depInUse || [];
+  const arr = apt?.arrInUse || [];
+  const hasDep = dep.length > 0;
+  const hasArr = arr.length > 0;
   if (rwys) {
-    rwys.hidden = false;
+    rwys.hidden = !hasDep && !hasArr;
     rwys.classList.remove("is-single");
   }
-  if (depCell) depCell.hidden = false;
-  if (arrCell) arrCell.hidden = false;
-  setText("apt-dep", rwyJoin(apt?.depInUse || []));
-  setText("apt-arr", rwyJoin(apt?.arrInUse || []));
+  if (depCell) depCell.hidden = !hasDep;
+  if (arrCell) arrCell.hidden = !hasArr;
+  setText("apt-dep", hasDep ? dep.join(", ") : "");
+  setText("apt-arr", hasArr ? arr.join(", ") : "");
 }
 
 function atisMarkup(raw, icao) {

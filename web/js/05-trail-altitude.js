@@ -89,14 +89,19 @@ function cruiseThatFits(totalNm, joinAgl, scale) {
   return Math.round(lo / 500) * 500;
 }
 
-function arrivingLow(ac, joinAgl, totalNm, scale) {
-  if (joinAgl >= 18000) return false;
+function spawnIsDescent(ac, joinAgl, pts, reconCount) {
+  if (joinAgl >= 22000) return false;
   if (ac && ac.atDestination) return true;
   const st = String((ac && ac.state) || "").toLowerCase();
-  if (/approach|landing|arriv|descend|descent|star/.test(st)) return true;
+  if (/approach|landing|arriv|descend|descent/.test(st)) return true;
   const dest = destLL(ac);
-  if (dest && ac && kmBetween([ac.lat, ac.lon], dest) < 140 && joinAgl < 16000) return true;
-  return totalNm > 35 && climbAglAt(Math.max(12, totalNm * 0.4), scale) > joinAgl + 4500;
+  if (dest && ac && kmBetween([ac.lat, ac.lon], dest) < 160 && joinAgl < 16000) return true;
+  if (pts && reconCount >= 0 && pts.length > reconCount + 1) {
+    const a = ptAlt(pts[reconCount]);
+    const b = ptAlt(pts[pts.length - 1]);
+    if (a != null && b != null && b < a - 1000) return true;
+  }
+  return false;
 }
 
 function fillClimbAlts(pts, reconCount, fieldFt, joinMsl, scale, ac) {
@@ -104,13 +109,12 @@ function fillClimbAlts(pts, reconCount, fieldFt, joinMsl, scale, ac) {
   const field = Number.isFinite(fieldFt) ? fieldFt : 0;
   const join = Number.isFinite(joinMsl) ? joinMsl : field;
   const joinAgl = Math.max(0, join - field);
-  let totalNm = 0;
   const dist = [0];
   for (let i = 1; i < reconCount; i += 1) {
-    totalNm += (kmBetween(pts[i - 1], pts[i]) || 0) / 1.852;
-    dist.push(totalNm);
+    dist.push(dist[i - 1] + (kmBetween(pts[i - 1], pts[i]) || 0) / 1.852);
   }
-  if (arrivingLow(ac, joinAgl, totalNm, scale) && totalNm > 8) {
+  const totalNm = dist[dist.length - 1] || 0;
+  if (spawnIsDescent(ac, joinAgl, pts, reconCount) && totalNm > 8) {
     const cruise = cruiseThatFits(totalNm, joinAgl, scale);
     let climbEnd = nmToReachAgl(cruise, scale);
     let descLen = descentNm(Math.max(0, cruise - joinAgl), scale);
@@ -132,15 +136,8 @@ function fillClimbAlts(pts, reconCount, fieldFt, joinMsl, scale, ac) {
     }
     return;
   }
-  const blendFrom = totalNm * 0.84;
   for (let i = 0; i < reconCount; i += 1) {
-    let agl = climbAglAt(dist[i], scale);
-    if (agl > joinAgl) agl = joinAgl;
-    if (dist[i] >= blendFrom && joinAgl > agl + 400 && totalNm > blendFrom) {
-      const t = (dist[i] - blendFrom) / (totalNm - blendFrom);
-      agl += (joinAgl - agl) * t * t;
-    }
-    pts[i][2] = field + agl;
+    pts[i][2] = field + Math.min(joinAgl, climbAglAt(dist[i], scale));
   }
 }
 
@@ -174,7 +171,7 @@ function blendAltsFrom(pts, startIdx, fromMsl, blendNm) {
   }
 }
 
-/** Pull the last recon segment toward the first live altitude so color does not step at the layer join. */
+/** Pull recon tail toward the first live altitude so color does not step at spawn. */
 function blendReconTailToLive(pts, reconCount, targetMsl, blendNm) {
   if (reconCount < 2 || reconCount >= pts.length || !Number.isFinite(targetMsl) || !(blendNm > 0)) return;
   let nm = 0;
@@ -194,38 +191,40 @@ function seamBlendNm(pts, reconCount) {
   for (let i = reconCount - 1; i >= 1; i -= 1) {
     reconTail += (kmBetween(pts[i - 1], pts[i]) || 0) / 1.852;
   }
-  return Math.min(28, Math.max(liveNm, reconTail * 0.55, 8));
+  let firstLeg = 0;
+  if (reconCount > 0 && reconCount < pts.length) {
+    firstLeg = (kmBetween(pts[reconCount - 1], pts[reconCount]) || 0) / 1.852;
+  }
+  return Math.min(42, Math.max(liveNm, reconTail * 0.55, firstLeg * 0.7, 8));
 }
 
 function assignTrailAlts(pts, ac, reconCount) {
   if (!pts.length) return;
-  const liveStart = Math.min(pts.length, Math.max(0, reconCount));
-  const field = fieldElevOf(ac, pts.slice(liveStart));
-  const measuredLive = [];
-  for (let i = reconCount; i < pts.length; i += 1) measuredLive[i] = ptAlt(pts[i]);
-  const join =
-    measuredLive[liveStart] ??
-    ptAlt(pts[pts.length - 1]) ??
-    Number(ac && ac.alt) ??
-    field;
-  if (reconCount > 0) fillClimbAlts(pts, reconCount, field, join, climbScale(ac), ac);
+  const spawnIdx = reconCount > 0 ? reconCount - 1 : -1;
+  const spawnMeasured = spawnIdx >= 0 ? ptAlt(pts[spawnIdx]) : null;
+  const field = fieldElevOf(ac, pts.slice(Math.min(pts.length, Math.max(0, reconCount))));
   const hereAlt = Number(ac && ac.alt);
-  let last = reconCount > 0 ? ptAlt(pts[Math.max(0, reconCount - 1)]) : null;
+  const join =
+    spawnMeasured ??
+    ptAlt(pts[reconCount]) ??
+    ptAlt(pts[pts.length - 1]) ??
+    (Number.isFinite(hereAlt) ? hereAlt : field);
+  if (reconCount > 0) fillClimbAlts(pts, reconCount, field, join, climbScale(ac), ac);
+  if (spawnIdx >= 0) pts[spawnIdx][2] = join;
+  let last = spawnIdx >= 0 ? join : null;
   for (let i = reconCount; i < pts.length; i += 1) {
-    const m = measuredLive[i];
-    if (m != null) pts[i][2] = m;
-    else if (ptAlt(pts[i]) == null) pts[i][2] = last != null ? last : hereAlt;
-    last = ptAlt(pts[i]);
+    const m = ptAlt(pts[i]);
+    if (m != null) last = m;
+    else pts[i][2] = last != null ? last : hereAlt;
   }
-  if (reconCount > 0 && liveStart < pts.length) {
-    const seamNm = seamBlendNm(pts, reconCount);
-    const seamIdx = Math.max(0, reconCount - 1);
-    const seamAlt = ptAlt(pts[seamIdx]) ?? join;
-    const liveTarget = measuredLive[liveStart] ?? ptAlt(pts[liveStart]) ?? join;
-    if (Number.isFinite(liveTarget)) blendReconTailToLive(pts, reconCount, liveTarget, seamNm);
-    if (Number.isFinite(seamAlt)) blendAltsFrom(pts, liveStart, ptAlt(pts[seamIdx]) ?? seamAlt, seamNm);
+  if (reconCount > 0 && reconCount < pts.length) {
+    const liveAlt = ptAlt(pts[reconCount]) ?? join;
+    blendReconTailToLive(pts, reconCount, liveAlt, seamBlendNm(pts, reconCount));
+  } else if (reconCount === 0) {
+    const seamAlt = ptAlt(pts[0]);
+    if (Number.isFinite(seamAlt)) blendAltsFrom(pts, 0, seamAlt, liveBlendNm(pts, 0));
   }
-  if (Number.isFinite(hereAlt)) pts[pts.length - 1][2] = hereAlt;
+  if (Number.isFinite(hereAlt) && reconCount === 0) pts[pts.length - 1][2] = hereAlt;
 }
 
 function rgbCss(rgb) {
@@ -281,9 +280,99 @@ function liveSigOf(pts) {
   return `${n}:${a[0]},${a[1]}:${b[0]},${b[1]}`;
 }
 
-function setTrail(reconPts, livePts, ac, reconKey) {
-  const live = livePts || [];
+// TEMP(DEBUG): recon/live join marker — remove DEBUG_TRAIL_JOIN block when done.
+const DEBUG_TRAIL_JOIN = true;
+let trailJoinDebugMarker = null;
+const trafficJoinMarkers = new Map();
+let trafficJoinRun = 0;
+
+function clearTrafficJoinMarkers() {
+  for (const layer of trafficJoinMarkers.values()) map.removeLayer(layer);
+  trafficJoinMarkers.clear();
+}
+
+async function refreshTrafficJoinMarkers(aircraft) {
+  if (!DEBUG_TRAIL_JOIN) {
+    clearTrafficJoinMarkers();
+    return;
+  }
+  const run = ++trafficJoinRun;
+  const want = new Set();
+  const cap = TOUCH_UI ? 12 : 20;
+  let n = 0;
+  for (const ac of aircraft || []) {
+    if (n >= cap) break;
+    if (!ac || !ac.id || ac.isOwnship || !ac.trackReady || !ac.trackAirborne) continue;
+    if (ac.id === trailAcId) continue;
+    if (typeof mapVisible === "function" && !mapVisible(ac)) continue;
+    n += 1;
+    want.add(ac.id);
+    if (typeof fetchTrack !== "function") continue;
+    const tk = await fetchTrack(ac.id, false);
+    if (run !== trafficJoinRun) return;
+    const join = tk.reconFrom || null;
+    if (!join || !Number.isFinite(join.lat) || !Number.isFinite(join.lon)) continue;
+    const latLng = [join.lat, join.lon];
+    let layer = trafficJoinMarkers.get(ac.id);
+    if (!layer) {
+      layer = L.circleMarker(latLng, {
+        radius: 5,
+        color: "#ffffff",
+        weight: 1,
+        fillColor: "#dc2626",
+        fillOpacity: 0.92,
+        interactive: false,
+        zIndexOffset: 2400,
+      }).addTo(map);
+      trafficJoinMarkers.set(ac.id, layer);
+    } else {
+      layer.setLatLng(latLng);
+    }
+  }
+  if (run !== trafficJoinRun) return;
+  for (const [id, layer] of trafficJoinMarkers) {
+    if (!want.has(id)) {
+      map.removeLayer(layer);
+      trafficJoinMarkers.delete(id);
+    }
+  }
+}
+
+function clearTrailJoinDebug() {
+  if (!trailJoinDebugMarker) return;
+  map.removeLayer(trailJoinDebugMarker);
+  trailJoinDebugMarker = null;
+}
+
+function setTrailJoinDebug(pt) {
+  if (!DEBUG_TRAIL_JOIN) {
+    clearTrailJoinDebug();
+    return;
+  }
+  if (!pt || !Number.isFinite(pt[0]) || !Number.isFinite(pt[1])) {
+    clearTrailJoinDebug();
+    return;
+  }
+  const latLng = [pt[0], pt[1]];
+  if (!trailJoinDebugMarker) {
+    trailJoinDebugMarker = L.circleMarker(latLng, {
+      radius: 7,
+      color: "#ffffff",
+      weight: 2,
+      fillColor: "#dc2626",
+      fillOpacity: 1,
+      interactive: false,
+      zIndexOffset: 2500,
+    }).addTo(map);
+  } else {
+    trailJoinDebugMarker.setLatLng(latLng);
+  }
+}
+
+function setTrail(reconPts, livePts, ac, reconKey, joinPt) {
   const recon = reconPts || [];
+  const live = livePts || [];
+  setTrailJoinDebug(joinPt);
   const field = fieldElevOf(ac, live.length ? live : recon);
   const key = reconKey || "";
   const sig = liveSigOf(live);
@@ -305,6 +394,7 @@ function hideHistory() {
   trail.clearLayers();
   if (typeof trailLiveGroup !== "undefined") trailLiveGroup.clearLayers();
   if (typeof trailLive !== "undefined") trailLive.setLatLngs([]);
+  clearTrailJoinDebug();
   paintedReconKey = null;
   paintedLiveSig = "";
   trailAcId = null;
@@ -316,6 +406,7 @@ function armTrail(ac) {
     trail.clearLayers();
     if (typeof trailLiveGroup !== "undefined") trailLiveGroup.clearLayers();
     if (typeof trailLive !== "undefined") trailLive.setLatLngs([]);
+    clearTrailJoinDebug();
     paintedReconKey = null;
     paintedLiveSig = "";
     histSeq += 1;

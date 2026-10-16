@@ -63,14 +63,14 @@ async function tick() {
       }
     }
 
-    lastFids = data.fids || {};
+    lastFids = data.trafficSource === "batc" ? data.fids || {} : {};
     lastTraffic = data.aircraft || [];
 
     const seen = new Set();
     for (const ac of data.aircraft) {
       const rolled = noteFlightLeg(ac);
       if (rolled) lastHistAt = 0;
-      noteLocalTrack(ac);
+      noteFieldAltFromAc(ac);
       if (!mapVisible(ac)) {
         if (markers.has(ac.id)) {
           map.removeLayer(markers.get(ac.id));
@@ -79,11 +79,15 @@ async function tick() {
           leftFieldAt.delete(ac.id);
           forgetMotion(ac.id);
         }
-        if (selectedId === ac.id && !(fidsPinnedAp && fidsBoardHasId(fidsPinnedAp, ac.id))) {
+        const trailLocked = trailAcId === ac.id;
+        if (
+          selectedId === ac.id &&
+          !trailLocked &&
+          !(fidsPinnedAp && fidsBoardHasId(fidsPinnedAp, ac.id))
+        ) {
           selRoute.setLatLngs([]);
           closePanel();
         }
-        if (trailAcId === ac.id) hideHistory();
         continue;
       }
       seen.add(ac.id);
@@ -163,6 +167,7 @@ async function tick() {
     }
     if (you) {
       lastOwn = you;
+      noteFieldAltFromAc(you);
       noteMotion(you);
     } else if (lastOwn) {
       forgetMotion(lastOwn.id);
@@ -213,6 +218,7 @@ async function tick() {
       showHistory(histAc);
     }
     if (typeof prefetchVisibleTracks === "function") prefetchVisibleTracks(data.aircraft);
+    if (typeof refreshTrafficJoinMarkers === "function") refreshTrafficJoinMarkers(data.aircraft);
     if (typeof ensurePaintMotion === "function") ensurePaintMotion();
   } finally {
     tickBusy = false;

@@ -1,10 +1,11 @@
-"""Airport panel payload: METAR, wind-favoured and in-use runways."""
+"""Airport panel payload: METAR and BATC-published in-use runways."""
 
 from __future__ import annotations
 
+import math
 import re
 
-from navdata import list_runways, _hdg_diff, _norm_rwy as _nav_norm_rwy, _same_rwy
+from navdata import list_runways, _norm_rwy as _nav_norm_rwy, _same_rwy
 
 
 def _parse_metar(metar: str) -> dict:
@@ -36,30 +37,39 @@ def _parse_metar(metar: str) -> dict:
     return out
 
 
+def _wx_num(val) -> float | None:
+    if val is None:
+        return None
+    try:
+        n = float(val)
+    except (TypeError, ValueError):
+        return None
+    return n if math.isfinite(n) else None
+
+
 def _synthetic_metar(icao: str, wx: dict) -> str:
     code = (icao or "ZZZZ").upper()[:4]
-    wind_from = wx.get("windFrom")
-    wind_kt = wx.get("windKt")
-    vis = wx.get("visM")
-    temp = wx.get("tempC")
-    dew = wx.get("dewC")
-    qnh = wx.get("qnh")
+    wind_from = _wx_num(wx.get("windFrom"))
+    wind_kt = _wx_num(wx.get("windKt"))
+    vis_m = _wx_num(wx.get("visM"))
+    temp = _wx_num(wx.get("tempC"))
+    dew = _wx_num(wx.get("dewC"))
+    qnh = _wx_num(wx.get("qnh"))
     bits = [code]
     if wind_from is not None and wind_kt is not None:
         bits.append(f"{int(wind_from) % 360:03d}{int(round(wind_kt)):02d}KT")
     elif wind_kt is not None:
         bits.append(f"VRB{int(round(wind_kt)):02d}KT")
-    if vis is not None:
-        vis_m = float(vis)
+    if vis_m is not None:
         bits.append("9999" if vis_m >= 9999 else f"{int(vis_m):04d}")
     if temp is not None:
-        t = int(round(float(temp)))
-        d = int(round(float(dew))) if dew is not None else t
+        t = int(round(temp))
+        d = int(round(dew)) if dew is not None else t
         def fmt(v: int) -> str:
             return f"M{abs(v):02d}" if v < 0 else f"{v:02d}"
         bits.append(f"{fmt(t)}/{fmt(d)}")
     if qnh is not None:
-        bits.append(f"Q{int(round(float(qnh))):04d}")
+        bits.append(f"Q{int(round(qnh)):04d}")
     return " ".join(bits) if len(bits) > 1 else ""
 
 
@@ -161,18 +171,6 @@ def _keep_local_rwys(idents: list[str], allowed: list[str]) -> list[str]:
     return out
 
 
-def wind_runways(icao: str, wind_from: float | None) -> list[str]:
-    rows = list_runways(icao)
-    if not rows:
-        return []
-    if wind_from is None:
-        return [row[0] for row in rows]
-    scored = [(_hdg_diff(row[3], wind_from), row[0]) for row in rows]
-    scored.sort()
-    best = scored[0][0]
-    return [ident for diff, ident in scored if diff <= best + 20]
-
-
 def runways_from_traffic(aircraft: list[dict], icao: str) -> tuple[list[str], list[str]]:
     """DEP/ARR in use from loaded AI flight plans at this airport."""
     code = (icao or "").upper()
@@ -261,11 +259,6 @@ def build(
             dep_use = traffic_dep
         if not arr_use:
             arr_use = traffic_arr
-    favoured = _keep_local_rwys(wind_runways(code, wind_from), local) or local
-    if not dep_use:
-        dep_use = favoured
-    if not arr_use:
-        arr_use = favoured
     atis, atis_name = atis_from_traffic(aircraft or [], code)
     rwy_atc = _keep_local_rwys([_norm_rwy(atc_runway)], local)
     rwy_atc = rwy_atc[0] if rwy_atc else ""

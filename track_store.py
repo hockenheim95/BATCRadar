@@ -316,3 +316,8 @@ class TrackStore:
         with self._lock:
             hit = self._first.get(aid)
             return dict(hit) if hit else None
+
+    def traffic_flags(self, aid: str) -> dict:
+        with self._lock:
+            buf = self._pts.get(aid, ())
+            return {"trackReady": len(buf) > 0}

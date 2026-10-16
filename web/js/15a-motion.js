@@ -247,7 +247,6 @@ function isAheadOfPose(pt, pose) {
 }
 
 function clipPtsBehindPose(pts, ac) {
-  if (!isExperimentalRender()) return pts;
   if (!pts || pts.length < 2 || !ac || !ac.id) return pts;
   const pose = displayedPoseOf(ac);
   if (!validPose(pose)) return pts;
@@ -419,7 +418,11 @@ function nudgeLiveRoute(ac, pose) {
   const dest = destLL(ac);
   if (!dest) return;
   const line = ac.isOwnship ? ownRoute : selRoute;
-  writeLineLatLngs(line, [dest, [pose.lat, pose.lon]]);
+  const pairs =
+    typeof directDestRoutePts === "function"
+      ? directDestRoutePts(dest, pose.lat, pose.lon)
+      : [dest, [pose.lat, pose.lon]];
+  writeLineLatLngs(line, pairs);
 }
 
 let lastMotionPaint = 0;

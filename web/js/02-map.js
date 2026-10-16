@@ -200,7 +200,6 @@ let selectedId = null;
 let trailAcId = null;
 let lastOwn = null;
 const markers = new Map();
-const localTracks = new Map();
 const localFieldAlt = new Map();
 let trail = L.featureGroup().addTo(map);
 const trailLiveGroup = L.featureGroup().addTo(map);

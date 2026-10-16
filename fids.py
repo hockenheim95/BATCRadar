@@ -80,7 +80,8 @@ def _is_player_ac(ac: dict, own_id: str | None) -> bool:
 
 
 def parse_batc_z(text: str | None, now_ms: float, *, player: bool = False) -> float | None:
-    """Ownship times are rewritten to AI weekday form; use the same weekday snap as traffic."""
+    if player:
+        return _parse_batc_z_player(text, now_ms)
     return _parse_batc_z_weekday(text, now_ms)
 
 
@@ -407,6 +408,18 @@ class Fids:
         self._arr_still: dict[str, tuple[float, float, float]] = {}
         self._last_own: tuple[float, float] | None = None
         self._dep_len_by_ap: dict[str, int] = {}
+
+    def clear_boards(self) -> None:
+        """No BATC traffic — drop departures/arrivals latch state (boards show empty)."""
+        self._stand.clear()
+        self._departed_at.clear()
+        self._seen_before_departure.clear()
+        self._arr_latch.clear()
+        self._arr_tracked.clear()
+        self._arr_board_joined.clear()
+        self._arr_goaround.clear()
+        self._arr_still.clear()
+        self._dep_len_by_ap.clear()
 
     def _arr_term_ok(self, ac: dict, ap: str, own: dict | None) -> bool:
         """Any flight operating into ap; keep go-around / prior board ids briefly after pool gaps."""

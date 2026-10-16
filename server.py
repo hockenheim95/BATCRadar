@@ -30,6 +30,8 @@ from parking import attach_gate
 from parking import warmup as warmup_parking
 from planes import (
     attach_flight_iata,
+    clear_flightplan_path_cache,
+    ensure_flightplan_paths,
     plane_from_batc,
     normalize_ownship_gs,
     plane_from_sim,
@@ -39,6 +41,7 @@ from planes import (
 from simconnect_bridge import SimConnectBridge
 from tiles import logo_png, start_tile_workers, tile_png
 from track_store import TrackStore
+import trail_recon
 from weather import current as weather_current
 from weather import enroute as weather_enroute
 from weather import metar_raw as weather_metar
@@ -87,7 +90,6 @@ _state = {
     "simError": "",
     "ownship": None,
     "aircraft": [],
-    "airport": {},
     "fids": {},
 }
 
@@ -123,49 +125,18 @@ def _publish_wire() -> None:
     raw = json.dumps(wire).encode("utf-8")
     _wire["raw"] = raw
     _wire["gzip"] = gzip.compress(raw, 3)
+    fleet = list(_state.get("aircraft") or [])
+    own = _state.get("ownship")
+    if own:
+        fleet.append(own)
     _paths = {
         p["id"]: {"sidPath": p.get("sidPath") or [], "starPath": p.get("starPath") or []}
-        for p in _state["aircraft"]
-        if p.get("sidPath") or p.get("starPath")
+        for p in fleet
+        if p.get("id") and (p.get("sidPath") or p.get("starPath"))
     }
 
 
 _publish_wire()
-
-_own_lock = threading.Lock()
-_own_wire = {"raw": b"{}"}
-
-
-def _publish_own(data: dict | None) -> None:
-    raw = json.dumps(data or {}, separators=(",", ":")).encode("utf-8")
-    with _own_lock:
-        _own_wire["raw"] = raw
-
-
-def _own_payload_from_plane(own: dict) -> dict:
-    return {
-        "id": "ownship",
-        "lat": own["lat"],
-        "lon": own["lon"],
-        "alt": own.get("alt"),
-        "gs": own.get("gs"),
-        "hdg": own.get("hdg"),
-        "onGround": bool(own.get("onGround")),
-        "parkingBrake": bool(own.get("parkingBrake")),
-        "source": own.get("source") or "batc",
-    }
-
-
-def ownship_loop() -> None:
-    """Publish ownship from the BATC-backed traffic state (SimConnect only as fallback)."""
-    while True:
-        with _lock:
-            own = _state.get("ownship")
-        if own and own.get("lat") is not None:
-            _publish_own(_own_payload_from_plane(own))
-        else:
-            _publish_own(None)
-        time.sleep(0.25)
 
 
 def airport_payload(icao: str, aircraft: list[dict] | None = None, wx_pack: dict | None = None) -> dict:
@@ -218,7 +189,6 @@ def _sim_tick() -> None:
             print("  BATC feed stale — reconnecting websocket", flush=True)
 
     sim_own, _, sim_ok, sim_error = _bridge.snapshot()
-    wx_pack = _bridge.weather_snapshot()
     batc_ok, batc_rows, batc_error = _batc.snapshot()
 
     others: list[dict] = []
@@ -229,7 +199,7 @@ def _sim_tick() -> None:
                 player_raw = raw
                 continue
             try:
-                others.append(plane_from_batc(raw))
+                others.append(plane_from_batc(raw, paths=False))
             except Exception as exc:
                 print(f"  BATC plane skip: {exc!r}", flush=True)
         traffic_source = "batc"
@@ -239,7 +209,7 @@ def _sim_tick() -> None:
     ownship = None
     if player_raw and player_raw.get("lat") is not None:
         try:
-            ownship = plane_from_batc(player_raw)
+            ownship = plane_from_batc(player_raw, paths=True)
             ownship["id"] = "ownship"
             ownship["isOwnship"] = True
         except Exception as exc:
@@ -261,7 +231,6 @@ def _sim_tick() -> None:
         normalize_ownship_gs(ownship)
         attach_flight_iata(ownship)
     for plane in others:
-        attach_gate(plane)
         attach_flight_iata(plane)
 
     apt_icao = ""
@@ -280,7 +249,7 @@ def _sim_tick() -> None:
             apt_icao = (ownship.get("dest") or ownship.get("origin") or "").upper()
     _bridge.set_metar_icao(apt_icao)
     fleet = ([ownship] if ownship else []) + others
-    airport = airport_payload(apt_icao, fleet, wx_pack)
+    has_batc_traffic = any(ac.get("source") == "batc" for ac in fleet)
 
     mode = "live" if ownship or batc_ok else "offline"
     aircraft = fleet
@@ -291,15 +260,20 @@ def _sim_tick() -> None:
     if batc_ok:
         if _batc_session and batc_session != _batc_session:
             _tracks.clear(keep_tracks)
+            trail_recon.invalidate()
+            clear_flightplan_path_cache()
         _batc_session = batc_session
         _batc_was_ok = True
     elif _batc_was_ok:
         _tracks.clear(keep_tracks)
+        trail_recon.invalidate()
+        clear_flightplan_path_cache()
         _batc_was_ok = False
     if mode == "live":
         _tracks.touch_session()
         for plane in aircraft:
-            _tracks.note_leg(plane["id"], plane.get("origin"), plane.get("dest"))
+            if _tracks.note_leg(plane["id"], plane.get("origin"), plane.get("dest")):
+                trail_recon.invalidate(plane["id"])
             _tracks.add(
                 plane["id"],
                 plane["lat"],
@@ -316,11 +290,18 @@ def _sim_tick() -> None:
             field_alt = _tracks.field_alt(plane["id"])
             if field_alt is not None:
                 plane["trackFieldAlt"] = field_alt
+            flags = _tracks.traffic_flags(plane["id"])
+            plane.update(flags)
+            plane["trackAirborne"] = bool(flags.get("trackReady")) and not bool(plane.get("onGround"))
         _tracks.keep_only({plane["id"] for plane in aircraft})
     else:
         _tracks.maybe_reset()
     try:
-        fids = _fids.update(fleet, ownship)
+        if has_batc_traffic:
+            fids = _fids.update(fleet, ownship)
+        else:
+            _fids.clear_boards()
+            fids = {}
     except Exception as exc:  # never let a board bug stop the sim loop
         print(f"  fids error: {exc!r}", flush=True)
         fids = {}
@@ -332,7 +313,6 @@ def _sim_tick() -> None:
         _state["simError"] = batc_error or sim_error
         _state["ownship"] = ownship
         _state["aircraft"] = aircraft
-        _state["airport"] = airport
         _state["version"] = current_version()
         _state["fids"] = fids
         _traffic_seq += 1
@@ -383,13 +363,6 @@ def api_traffic():
     return _bytes(_wire.get("raw") or b"{}", "application/json; charset=utf-8", _wire.get("gzip"))
 
 
-@app.get("/api/ownship")
-def api_ownship():
-    with _own_lock:
-        raw = _own_wire["raw"]
-    return _bytes(raw, "application/json; charset=utf-8")
-
-
 @app.get("/api/airport")
 def api_airport():
     icao = request.args.get("icao") or ""
@@ -401,14 +374,34 @@ def api_airport():
 @app.get("/api/track")
 def api_track():
     aid = request.args.get("id") or ""
+    with _lock:
+        plane = None
+        own = _state.get("ownship")
+        if own and own.get("id") == aid:
+            plane = dict(own)
+        else:
+            for row in _state.get("aircraft") or []:
+                if row.get("id") == aid:
+                    plane = dict(row)
+                    break
     paths = _paths.get(aid) or {}
+    if plane and not paths.get("sidPath") and not paths.get("starPath"):
+        ensure_flightplan_paths(plane)
+        paths = {
+            "sidPath": plane.get("sidPath") or [],
+            "starPath": plane.get("starPath") or [],
+        }
+    live = _tracks.get(aid)
+    first = _tracks.first_seen(aid)
+    recon_from = trail_recon.recon_anchor(plane, first, paths)
+    points, recon_count = trail_recon.combined_trail(aid, plane, paths, live, recon_from)
     return _json_bytes(
         {
             "id": aid,
-            "points": _tracks.get(aid),
-            "firstSeen": _tracks.first_seen(aid),
-            "sidPath": paths.get("sidPath") or [],
-            "starPath": paths.get("starPath") or [],
+            "points": points,
+            "reconCount": recon_count,
+            "firstSeen": first,
+            "reconFrom": recon_from,
         }
     )
 
@@ -490,7 +483,6 @@ def main() -> None:
     warmup_actypes()
     warmup_parking()
     threading.Thread(target=sim_loop, daemon=True).start()
-    threading.Thread(target=ownship_loop, daemon=True, name="ownship").start()
     start_tile_workers()
     ip = lan_ip()
     logging.getLogger("waitress").setLevel(logging.ERROR)

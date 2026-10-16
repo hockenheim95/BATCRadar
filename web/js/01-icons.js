@@ -68,10 +68,10 @@ function headingOf(ac) {
 function displayHdg(ac) {
   const hdg = headingOf(ac);
   const gs = Number(ac && ac.gs) || 0;
-  const buf = localTracks.get(ac && ac.id);
-  if (gs < 25 || !buf || buf.length < 2) return hdg;
-  const a = buf[buf.length - 2];
-  const b = buf[buf.length - 1];
+  const samples = typeof motionById !== "undefined" ? motionById.get(ac && ac.id)?.samples : null;
+  if (gs < 25 || !samples || samples.length < 2) return hdg;
+  const a = [samples[samples.length - 2].lat, samples[samples.length - 2].lon];
+  const b = [samples[samples.length - 1].lat, samples[samples.length - 1].lon];
   if (kmBetween(a, b) < 0.06) return hdg;
   const track = bearingTo(a, b);
   let d = Math.abs(hdg - track) % 360;
