@@ -17,10 +17,10 @@ OWN_MIN_MOVE = 0.00035
 AI_MIN_KM = 0.08
 AI_CRUISE_KM = 3.0
 AI_SAMPLE_SEC = 10.0
-# Taxi (on ground / ≤35 kt): sparse on straights, densify on heading turns.
+# Taxi (on ground / ≤35 kt): denser than cruise so apron/taxi curves stay curved.
 AI_TAXI_KT = 35.0
-AI_TAXI_KM = 0.5
-AI_TAXI_HDG_DEG = 10.0
+AI_TAXI_KM = 0.12
+AI_TAXI_HDG_DEG = 5.0
 AI_HDG_DEG = 4.0
 AI_ALT_FT = 800.0
 AI_MAX_DT = 8.0

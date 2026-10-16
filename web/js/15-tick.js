@@ -2,11 +2,19 @@ let tickBusy = false;
 let lastBatcSession = 0;
 let lastTrafficSeq = 0;
 let lastTrafficAt = 0;
+let serverReachable = true;
 const TRAFFIC_STALE_MS = 3500;
 
 function paintTrafficBadge(data) {
   const badge = document.getElementById("mode-badge");
   if (!badge) return;
+  if (!data) {
+    badge.textContent = "unconnected";
+    badge.classList.toggle("live", false);
+    badge.classList.toggle("unconnected", true);
+    badge.classList.toggle("stale", false);
+    return;
+  }
   const batcLive = data.trafficSource === "batc";
   const seq = Number(data.trafficSeq) || 0;
   const at = Number(data.trafficAt) || 0;
@@ -31,18 +39,46 @@ function paintTrafficBadge(data) {
   badge.classList.toggle("stale", false);
 }
 
+function clearTrafficOnServerDown() {
+  if (!serverReachable) return;
+  serverReachable = false;
+  paintTrafficBadge(null);
+  for (const [id, marker] of markers) {
+    map.removeLayer(marker);
+    markers.delete(id);
+    seenOnField.delete(id);
+    leftFieldAt.delete(id);
+    forgetMotion(id);
+  }
+  lastTraffic = [];
+  lastFids = {};
+  lastOwn = null;
+  lastTrafficSeq = 0;
+  lastTrafficAt = 0;
+  lastBatcSession = 0;
+  lastHistAt = 0;
+  forgetAllTracks();
+  if (typeof motionById !== "undefined") motionById.clear();
+  if (typeof stopPaintMotion === "function") stopPaintMotion();
+  hideHistory();
+  ownRoute.setLatLngs([]);
+  selRoute.setLatLngs([]);
+  closePanel();
+}
+
 async function tick() {
   if (tickBusy || document.hidden) return;
   tickBusy = true;
   try {
     const res = await fetch("/api/traffic", { cache: "no-store" });
+    if (!res.ok) throw new Error(`traffic ${res.status}`);
     const data = await res.json();
+    serverReachable = true;
     if (data.version) {
       const verMeta = document.querySelector('meta[name="efb-version"]');
       if (verMeta) verMeta.content = data.version;
     }
     paintTrafficBadge(data);
-    const batcLive = data.trafficSource === "batc";
 
     const batcSession = Number(data.batcSession) || 0;
     if (batcSession !== lastBatcSession) {
@@ -111,6 +147,9 @@ async function tick() {
             return;
           }
           setFollowMe(false);
+          if (typeof followAcId !== "undefined" && followAcId && followAcId !== current.id) {
+            clearFollowTraffic();
+          }
           const prev = selectedId;
           clearFidsPin();
           openPanel(current);
@@ -219,6 +258,8 @@ async function tick() {
     }
     if (typeof prefetchVisibleTracks === "function") prefetchVisibleTracks(data.aircraft);
     if (typeof ensurePaintMotion === "function") ensurePaintMotion();
+  } catch {
+    clearTrafficOnServerDown();
   } finally {
     tickBusy = false;
   }

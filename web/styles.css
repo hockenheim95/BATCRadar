@@ -5,6 +5,7 @@
   --bar: rgba(24, 26, 30, 0.88);
   --card: #f3f4f6;
   --card-edge: color-mix(in srgb, var(--ink) 12%, transparent);
+  --own-ac: #e11d48;
 }
 
 html.dark {
@@ -167,7 +168,7 @@ html.dark #map {
   position: absolute;
   right: 0;
   top: calc(100% + 8px);
-  width: 260px;
+  width: 280px;
   background: var(--panel);
   color: var(--ink);
   border-radius: 12px;
@@ -190,7 +191,8 @@ html.dark #map {
   font-weight: 650;
 }
 
-.opt-row select {
+.opt-row select,
+.opt-row input[type="number"] {
   background: var(--card);
   color: var(--ink);
   border: 0;
@@ -200,6 +202,42 @@ html.dark #map {
   max-width: 148px;
 }
 
+.opt-row input[type="number"] {
+  width: 88px;
+  text-align: right;
+  -moz-appearance: textfield;
+}
+
+.opt-row input[type="number"]::-webkit-outer-spin-button,
+.opt-row input[type="number"]::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.opt-row input[type="color"] {
+  width: 42px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  cursor: pointer;
+}
+
+.opt-row input[type="color"]::-webkit-color-swatch-wrapper {
+  padding: 2px;
+}
+
+.opt-row input[type="color"]::-webkit-color-swatch {
+  border: 0;
+  border-radius: 6px;
+}
+
+.opt-row input[type="color"]::-moz-color-swatch {
+  border: 0;
+  border-radius: 6px;
+}
+
 .opt-row input[type="checkbox"] {
   width: 18px;
   height: 18px;
@@ -207,7 +245,7 @@ html.dark #map {
 
 .opt-action {
   width: 100%;
-  margin-top: 6px;
+  margin-top: 0;
   padding: 10px 12px;
   border: 0;
   border-radius: 10px;
@@ -216,6 +254,12 @@ html.dark #map {
   font-size: 13px;
   font-weight: 650;
   text-align: center;
+  cursor: pointer;
+}
+
+.opt-action:disabled {
+  opacity: 0.55;
+  cursor: default;
 }
 
 .panel {
@@ -849,6 +893,48 @@ html.dark .flight-sign--route {
   min-width: 0;
 }
 
+.panel-head-aside {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: center;
+  flex: 0 0 auto;
+  gap: 6px;
+  min-width: 0;
+}
+
+.btn-follow-ac {
+  flex: 0 0 auto;
+  align-self: center;
+  background: var(--bar);
+  color: #fff;
+  border: 0;
+  border-radius: 8px;
+  padding: 6px 10px;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.2;
+  white-space: nowrap;
+  cursor: pointer;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+  user-select: none;
+}
+
+.btn-follow-ac.is-active {
+  background: #2563eb;
+  color: #fff;
+}
+
+/* Desktop: Follow sits next to airline/type; phone aside button hidden. */
+html:not(.layout-phone) .btn-follow-ac--aside {
+  display: none !important;
+}
+
+html:not(.layout-phone) .panel-head-aside {
+  display: contents;
+}
+
 .logo-wrap {
   flex: 0 0 56px;
   width: 56px;
@@ -1411,19 +1497,19 @@ html.dark .apt-fids tbody tr.is-sel:hover {
 }
 
 .apt-fids tbody tr.is-own {
-  background: color-mix(in srgb, #e11d48 14%, transparent);
+  background: color-mix(in srgb, var(--own-ac) 14%, transparent);
 }
 
 .apt-fids tbody tr.is-own:hover {
-  background: color-mix(in srgb, #e11d48 20%, transparent);
+  background: color-mix(in srgb, var(--own-ac) 20%, transparent);
 }
 
 html.dark .apt-fids tbody tr.is-own {
-  background: color-mix(in srgb, #fb7185 18%, transparent);
+  background: color-mix(in srgb, var(--own-ac) 22%, transparent);
 }
 
 html.dark .apt-fids tbody tr.is-own:hover {
-  background: color-mix(in srgb, #fb7185 24%, transparent);
+  background: color-mix(in srgb, var(--own-ac) 28%, transparent);
 }
 
 .fids-logo {
@@ -1757,15 +1843,45 @@ html.layout-phone .mobile-sheet--flight .stats > .live-meta {
   display: none !important;
 }
 
-html.layout-phone .mobile-sheet--flight .panel-head .live-meta {
+html.layout-phone .mobile-sheet--flight .panel-head-aside {
   flex: 0 0 7.5rem;
   width: 7.5rem;
   min-width: 7.5rem;
   max-width: 7.5rem;
-  padding: 8px 8px;
-  font-size: clamp(12px, 3.3vw, 14px);
+  gap: 0;
+  background: color-mix(in srgb, var(--ink) 6%, var(--card));
+}
+
+html.layout-phone .mobile-sheet--flight .btn-follow-ac--inline {
+  display: none !important;
+}
+
+html.layout-phone .mobile-sheet--flight .btn-follow-ac--aside {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  align-self: stretch;
+  width: 100%;
+  min-height: 36px;
+  margin: 0;
+  padding: 8px 6px;
+  border-radius: 0;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  z-index: 2;
+  position: relative;
+}
+
+html.layout-phone .mobile-sheet--flight .panel-head .live-meta {
+  flex: 1 1 auto;
+  width: 100%;
+  min-width: 0;
+  max-width: none;
+  padding: 6px 8px;
+  font-size: clamp(11px, 3.1vw, 13px);
   font-weight: 650;
-  line-height: 1.25;
+  line-height: 1.2;
   border-radius: 0;
   overflow: hidden;
   display: flex !important;
@@ -1778,6 +1894,11 @@ html.layout-phone .mobile-sheet--flight .panel-head .live-meta {
 
 html.layout-phone .mobile-sheet--flight .panel-head .live-meta[hidden] {
   display: none !important;
+}
+
+html.layout-phone .mobile-sheet--flight .panel-head-aside:has(.live-meta[hidden]) .btn-follow-ac--aside {
+  flex: 1 1 auto;
+  min-height: 52px;
 }
 
 html.layout-phone .mobile-sheet--flight .callsign,
@@ -1817,6 +1938,7 @@ html.layout-phone .mobile-sheet--flight .chip {
 html.layout-phone .mobile-sheet--flight .typename {
   font-size: 11px;
 }
+
 
 html.layout-phone .route-segment--top {
   margin: 14px 0 0;

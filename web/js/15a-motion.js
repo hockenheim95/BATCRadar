@@ -349,9 +349,18 @@ function liveLineAc() {
   return null;
 }
 
+function mapStrokeOriginKey() {
+  if (typeof map === "undefined" || !map) return "";
+  const o = map.getPixelOrigin();
+  const p = typeof map._getMapPanePos === "function" ? map._getMapPanePos() : L.point(0, 0);
+  return `${map.getZoom()}:${o.x},${o.y}:${p.x},${p.y}`;
+}
+
 function writeLineLatLngs(line, pairs) {
   if (!line || !pairs || pairs.length < 2) return;
   const pts = line.getLatLngs();
+  const originKey = mapStrokeOriginKey();
+  const originChanged = line._efbOriginKey !== originKey;
   if (pts && pts.length === pairs.length) {
     let changed = false;
     for (let i = 0; i < pairs.length; i += 1) {
@@ -361,10 +370,24 @@ function writeLineLatLngs(line, pairs) {
         changed = true;
       }
     }
-    if (changed) strokePathUnrounded(line);
+    // After setView/pan the latlngs can match while the SVG `d` is still in old pixels.
+    if (!changed && !originChanged) return;
+    line._efbOriginKey = originKey;
+    strokePathUnrounded(line);
     return;
   }
   line.setLatLngs(pairs);
+  line._efbOriginKey = originKey;
+  strokePathUnrounded(line);
+}
+
+/** Force Leaflet + unrounded SVG rebuild (used after follow catch-up setView). */
+function forceLineRestroke(line) {
+  if (!line || !line._map) return;
+  const pts = line.getLatLngs();
+  if (!pts || pts.length < 2) return;
+  line._efbOriginKey = "";
+  line.setLatLngs(pts.map((p) => [p.lat, p.lng]));
   strokePathUnrounded(line);
 }
 
@@ -464,9 +487,23 @@ function paintOwnshipNow(now) {
 
 function paintLinedNow(now) {
   const lined = liveLineAc();
-  if (!lined || !lined.id || lined.isOwnship || lined.id === "ownship") return;
+  const followId = typeof followAcId !== "undefined" ? followAcId : null;
+  if (!lined || !lined.id || lined.isOwnship || lined.id === "ownship") {
+    if (followId && typeof followTargetSmooth === "function") {
+      const pose = motionPoseAt(followId, now);
+      if (validPose(pose)) followTargetSmooth(now, pose);
+    }
+    return;
+  }
   const pose = motionPoseAt(lined.id, now);
   if (!validPose(pose)) return;
+  // Pan before placing marker/trails so icon + SVG share one stable projection.
+  if (followId === lined.id && typeof followTargetSmooth === "function") {
+    followTargetSmooth(now, pose);
+  } else if (followId && followId !== lined.id && typeof followTargetSmooth === "function") {
+    const fp = motionPoseAt(followId, now);
+    if (validPose(fp)) followTargetSmooth(now, fp);
+  }
   const mk = markers.get(lined.id);
   if (mk) placeMarkerPose(mk, lined, pose);
   else writePose(lined, pose);

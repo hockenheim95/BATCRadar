@@ -47,6 +47,7 @@ function fillPanelHead(ac) {
   setText("p-reg", ac.registration || "—");
   setText("p-typename", ac.typeName || "");
   setAirlineLogo(ac);
+  if (typeof syncFollowWithSelection === "function") syncFollowWithSelection(ac);
 }
 
 function paintAirportRwys(apt) {
@@ -511,6 +512,8 @@ function closePanel() {
   document.getElementById("p-flight-body").hidden = false;
   if (prev && markers.has(prev)) refreshIcon(markers.get(prev));
   hideHistory();
+  if (typeof clearFollowTraffic === "function") clearFollowTraffic();
+  if (typeof paintFollowAcButton === "function") paintFollowAcButton();
   if (lastOwn) {
     syncRoutes(lastOwn);
     if (aptTab === "dep" || aptTab === "arr") renderFidsTable();

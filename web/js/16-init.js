@@ -9,17 +9,41 @@ if (btnFollowMe) {
     bumpChrome();
   });
 }
+let followAcTapAt = 0;
+function onFollowAcButton(ev) {
+  ev.preventDefault();
+  ev.stopPropagation();
+  const now = Date.now();
+  if (now - followAcTapAt < 350) return;
+  followAcTapAt = now;
+  const ac = typeof followAcForPanel === "function" ? followAcForPanel() : null;
+  if (!ac) return;
+  toggleFollowForAc(ac);
+  bumpChrome();
+}
+for (const id of ["btn-follow-ac", "btn-follow-ac-phone"]) {
+  const btn = document.getElementById(id);
+  if (!btn) continue;
+  btn.addEventListener("click", onFollowAcButton);
+}
+paintFollowAcButton();
 map.on("dragstart", () => {
   pauseFollowFromUser();
   bumpChrome();
 });
+map.on("dragend", () => {
+  // Even if dragstart raced with followMoveLock, catch-up must commit a real setView
+  // so dashed route + trail canvas rebuild for the new viewport.
+  if (anyFollowActive()) followNeedsViewCommit = true;
+});
 map.on("zoomstart", () => {
-  if (followMe) followPausedUntil = Date.now() + FOLLOW_PAUSE_MS;
+  // Ignore programmatic follow/engage zooms (followMoveLock); only user zoom pauses.
+  if (anyFollowActive() && !followMoveLock) markFollowPaused();
 });
 map.getContainer().addEventListener(
   "touchstart",
   () => {
-    if (followMe) followPausedUntil = Date.now() + FOLLOW_PAUSE_MS;
+    if (anyFollowActive() && !followMoveLock) markFollowPaused();
   },
   { passive: true }
 );
@@ -75,6 +99,86 @@ if (renderSelect) {
   });
 }
 
+const ownColorInput = document.getElementById("opt-own-color");
+if (ownColorInput) {
+  ownColorInput.value = applyOwnColor(ownColorPref());
+  ownColorInput.addEventListener("input", () => {
+    applyOwnColor(ownColorInput.value);
+    bumpChrome();
+  });
+}
+
+const portInput = document.getElementById("opt-port");
+const portApply = document.getElementById("opt-port-apply");
+let livePort = Number(location.port) || (location.protocol === "https:" ? 443 : 80);
+
+function syncPortApply() {
+  if (!portInput || !portApply) return;
+  const next = Number(portInput.value);
+  const dirty = Number.isFinite(next) && next !== livePort;
+  portApply.hidden = !dirty;
+}
+
+if (portInput) {
+  portInput.value = String(livePort);
+  fetch("/api/settings", { cache: "no-store" })
+    .then((res) => (res.ok ? res.json() : null))
+    .then((data) => {
+      const port = Number(data?.port);
+      if (!Number.isFinite(port)) return;
+      livePort = port;
+      portInput.value = String(port);
+      syncPortApply();
+    })
+    .catch(() => {});
+  portInput.addEventListener("input", syncPortApply);
+  portInput.addEventListener("change", syncPortApply);
+}
+if (portApply) {
+  portApply.addEventListener("click", async () => {
+    const next = Number(portInput?.value);
+    if (!Number.isFinite(next) || next < 1024 || next > 65535) {
+      alert("Port must be between 1024 and 65535.");
+      return;
+    }
+    if (next === livePort) {
+      syncPortApply();
+      return;
+    }
+    portApply.disabled = true;
+    portApply.textContent = "Restarting…";
+    try {
+      const res = await fetch("/api/settings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ port: next }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.ok) {
+        alert(data.error || "Could not change port.");
+        portApply.disabled = false;
+        portApply.textContent = "Apply & restart";
+        return;
+      }
+      if (!data.restarting) {
+        livePort = next;
+        portApply.disabled = false;
+        portApply.textContent = "Apply & restart";
+        syncPortApply();
+        return;
+      }
+      const target = `${location.protocol}//${location.hostname}:${next}/`;
+      setTimeout(() => {
+        location.href = target;
+      }, 900);
+    } catch {
+      alert("Could not change port.");
+      portApply.disabled = false;
+      portApply.textContent = "Apply & restart";
+    }
+  });
+}
+
 map.on("click", () => {
   optionsMenu.hidden = true;
   bumpChrome();
@@ -98,7 +202,12 @@ function onFidsRow(ev) {
   if (fromFids) pinFidsAirport(fidsAp);
   const ac = fidsAcById(id);
   if (!ac) return;
-  if (!ac.isOwnship && !(lastOwn && ac.id === lastOwn.id)) setFollowMe(false);
+  if (!ac.isOwnship && !(lastOwn && ac.id === lastOwn.id)) {
+    setFollowMe(false);
+    if (typeof clearFollowTraffic === "function" && followAcId && followAcId !== ac.id) {
+      clearFollowTraffic();
+    }
+  }
   openPanel(ac);
   armTrail(ac);
   if (markers.has(ac.id)) refreshIcon(markers.get(ac.id));

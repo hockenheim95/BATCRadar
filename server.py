@@ -38,6 +38,7 @@ from planes import (
     snap_origin_to_field,
     tz_fallback,
 )
+import settings as app_settings
 from simconnect_bridge import SimConnectBridge
 from tiles import logo_png, start_tile_workers, tile_png
 from track_store import TrackStore
@@ -47,7 +48,7 @@ from weather import enroute as weather_enroute
 from weather import metar_raw as weather_metar
 from paths import bundle
 
-PORT = int(os.environ.get("EFB_PORT", "8080"))
+PORT = app_settings.listen_port(env_port=os.environ.get("EFB_PORT"))
 WEB_DIR = bundle() / "web"
 VERSION_FILE = bundle() / "VERSION"
 
@@ -356,6 +357,57 @@ def index_page():
 @app.get("/api/version")
 def api_version():
     return _json_bytes({"version": current_version()})
+
+
+def _port_available(port: int) -> bool:
+    if port == PORT:
+        return True
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        sock.bind(("0.0.0.0", port))
+        return True
+    except OSError:
+        return False
+    finally:
+        sock.close()
+
+
+def _reexec_soon() -> None:
+    def go() -> None:
+        time.sleep(0.45)
+        if getattr(sys, "frozen", False):
+            os.execv(sys.executable, [sys.executable, *sys.argv[1:]])
+        else:
+            os.execv(sys.executable, [sys.executable, *sys.argv])
+
+    threading.Thread(target=go, daemon=True).start()
+
+
+@app.get("/api/settings")
+def api_settings_get():
+    return _json_bytes({"port": PORT})
+
+
+@app.post("/api/settings")
+def api_settings_post():
+    body = request.get_json(silent=True) or {}
+    port = app_settings.clamp_port(body.get("port"))
+    if port is None:
+        return _json_bytes(
+            {
+                "ok": False,
+                "error": f"Port must be {app_settings.PORT_MIN}–{app_settings.PORT_MAX}",
+                "port": PORT,
+            }
+        ), 400
+    if not _port_available(port):
+        return _json_bytes({"ok": False, "error": f"Port {port} is already in use", "port": PORT}), 409
+    app_settings.set_port(port)
+    restarting = port != PORT
+    if restarting:
+        _reexec_soon()
+    return _json_bytes({"ok": True, "port": port, "restarting": restarting})
 
 
 @app.get("/api/traffic")

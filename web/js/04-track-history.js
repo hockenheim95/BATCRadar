@@ -226,6 +226,7 @@ function paintHistoryFrom(ac, fetched, here) {
       ac
     );
   }
+  if (wantsGroundTrailSmooth(ac)) paintLive = roundTrailCorners(paintLive);
   const reconCount = reconPts.length;
   const combined = reconCount ? reconPts.concat(paintLive.slice(1)) : paintLive;
   assignTrailAlts(combined, ac, reconCount);
@@ -327,4 +328,56 @@ function densifyTrail(pts, coarse) {
     for (let s = 1; s <= steps; s += 1) out.push(copyPt(a, s / steps, b));
   }
   return out;
+}
+
+function trailCornerDeg(a, b, c) {
+  if (typeof bearingTo !== "function") return 0;
+  return headingDiff(bearingTo(a, b), bearingTo(b, c));
+}
+
+/** Soften sharp taxi chords with short quadratic fillets (keeps endpoints). */
+function roundTrailCorners(pts) {
+  if (!pts || pts.length < 3) return pts || [];
+  const out = [pts[0].slice()];
+  for (let i = 1; i < pts.length - 1; i += 1) {
+    const prev = out[out.length - 1];
+    const cur = pts[i];
+    const nxt = pts[i + 1];
+    const d1 = kmBetween(prev, cur) || 0;
+    const d2 = kmBetween(cur, nxt) || 0;
+    const turn = trailCornerDeg(prev, cur, nxt);
+    if (turn < 14 || d1 < 0.05 || d2 < 0.05) {
+      out.push(cur.slice());
+      continue;
+    }
+    const lead = Math.min(0.06, d1 * 0.32, d2 * 0.32);
+    const a = copyPt(prev, 1 - lead / d1, cur);
+    const c = copyPt(cur, lead / d2, nxt);
+    if (kmBetween(prev, a) > 0.008) out.push(a);
+    const steps = Math.max(3, Math.min(7, Math.ceil(turn / 18)));
+    for (let s = 1; s < steps; s += 1) {
+      const t = s / steps;
+      const u = 1 - t;
+      const lat = u * u * a[0] + 2 * u * t * cur[0] + t * t * c[0];
+      const lon = u * u * a[1] + 2 * u * t * cur[1] + t * t * c[1];
+      const altA = ptAlt(a);
+      const altB = ptAlt(cur);
+      const altC = ptAlt(c);
+      const alt =
+        altA != null && altB != null && altC != null
+          ? u * u * altA + 2 * u * t * altB + t * t * altC
+          : altB ?? altC ?? altA;
+      out.push([lat, lon, alt]);
+    }
+    out.push(c);
+  }
+  out.push(pts[pts.length - 1].slice());
+  return out;
+}
+
+function wantsGroundTrailSmooth(ac) {
+  if (!ac) return false;
+  if (ac.onGround || ac.atDestination) return true;
+  const st = String(ac.state || "").toLowerCase();
+  return st === "taxi" || st === "pushback" || st === "parked" || st === "takeoff";
 }

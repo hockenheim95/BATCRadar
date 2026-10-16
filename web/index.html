@@ -41,10 +41,14 @@
                       </div>
                       <div class="typename" id="p-typename">—</div>
                     </div>
+                    <button type="button" class="btn-follow-ac btn-follow-ac--inline" id="btn-follow-ac" aria-pressed="false">Follow</button>
                   </div>
                 </div>
               </div>
-              <div class="live-meta" id="p-phase-phone" hidden></div>
+              <div class="panel-head-aside">
+                <button type="button" class="btn-follow-ac btn-follow-ac--aside" id="btn-follow-ac-phone" aria-pressed="false">Follow</button>
+                <div class="live-meta" id="p-phase-phone" hidden></div>
+              </div>
             </div>
 
             <div class="route route-segment route-segment--top">
@@ -246,6 +250,15 @@
                 <option value="experimental">Experimental</option>
               </select>
             </label>
+            <label class="opt-row">
+              Color user aircraft
+              <input type="color" id="opt-own-color" value="#e11d48" />
+            </label>
+            <label class="opt-row">
+              Port
+              <input type="number" id="opt-port" min="1024" max="65535" step="1" inputmode="numeric" />
+            </label>
+            <button type="button" class="opt-action" id="opt-port-apply" hidden>Apply &amp; restart</button>
           </div>
         </div>
       </div>

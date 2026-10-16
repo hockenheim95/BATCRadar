@@ -1,4 +1,23 @@
 const TOUCH_UI = (navigator.maxTouchPoints || 0) > 0 || window.matchMedia("(pointer: coarse)").matches;
+const OWN_COLOR_DEFAULT = "#e11d48";
+
+function ownColorPref() {
+  const raw = (localStorage.getItem("efb-own-color") || OWN_COLOR_DEFAULT).trim();
+  return /^#[0-9a-fA-F]{6}$/.test(raw) ? raw.toLowerCase() : OWN_COLOR_DEFAULT;
+}
+
+function applyOwnColor(hex) {
+  const next = /^#[0-9a-fA-F]{6}$/.test(hex || "") ? hex.toLowerCase() : OWN_COLOR_DEFAULT;
+  localStorage.setItem("efb-own-color", next);
+  document.documentElement.style.setProperty("--own-ac", next);
+  if (typeof markers === "undefined") return next;
+  for (const marker of markers.values()) {
+    if (!marker.acData?.isOwnship) continue;
+    marker.iconKey = "";
+    refreshIcon(marker);
+  }
+  return next;
+}
 
 function svgAttr(fill) {
   const ink = "#111111";
@@ -81,11 +100,12 @@ function displayHdg(ac) {
 }
 
 function iconKey(ac, selected) {
-  return `${shapeOf(ac)}|${iconSize(ac, selected)}|${ac.isOwnship ? 1 : 0}|${selected ? 1 : 0}`;
+  const own = ac.isOwnship ? ownColorPref() : "0";
+  return `${shapeOf(ac)}|${iconSize(ac, selected)}|${own}|${selected ? 1 : 0}`;
 }
 
 function iconFor(ac, selected) {
-  const fill = ac.isOwnship ? "#e11d48" : selected ? "#2f6bff" : "#f5c518";
+  const fill = ac.isOwnship ? ownColorPref() : selected ? "#2f6bff" : "#f5c518";
   const px = iconSize(ac, selected);
   const shape = shapeOf(ac);
   const hdg = displayHdg(ac);
