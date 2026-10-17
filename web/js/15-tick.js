@@ -56,6 +56,7 @@ function clearTrafficOnServerDown() {
   lastTrafficSeq = 0;
   lastTrafficAt = 0;
   lastBatcSession = 0;
+  if (typeof lastPanelIdentityKey !== "undefined") lastPanelIdentityKey = "";
   lastHistAt = 0;
   forgetAllTracks();
   if (typeof motionById !== "undefined") motionById.clear();
@@ -171,6 +172,7 @@ async function tick() {
       }
       if (selectedId === ac.id) {
         setLiveStats(ac);
+        if (typeof refreshSelectedPanelIfNeeded === "function") refreshSelectedPanelIfNeeded(ac);
       }
       noteFieldLeave(ac);
     }
@@ -208,6 +210,7 @@ async function tick() {
       lastOwn = you;
       noteFieldAltFromAc(you);
       noteMotion(you);
+      if (typeof refreshSelectedPanelIfNeeded === "function") refreshSelectedPanelIfNeeded(you);
     } else if (lastOwn) {
       forgetMotion(lastOwn.id);
       lastOwn = null;

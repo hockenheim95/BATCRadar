@@ -1,0 +1,23 @@
+---
+description: Only one BATCRadar HTTP server; reuse it across chats
+alwaysApply: true
+---
+
+# EFB server — single instance
+
+Never start a second `server.py` / `START.bat` / Waitress process for this project.
+
+## Before serving or live-testing
+
+1. Run `python tools/efb_ctl.py status` (or open `STATUS.bat`).
+2. If HTTP is OK on the configured port (default **8080**), **reuse that instance** — do not spawn another terminal with `python server.py`.
+3. If you need a clean restart: `python tools/efb_ctl.py stop`, then start **one** server (`START.bat` or `python server.py` in a single background terminal).
+4. To start only when nothing healthy is running: `python tools/efb_ctl.py ensure`.
+
+## Live data
+
+Traffic/ownship need MSFS + BeyondATC (UDP **41717**). The agent reads live JSON from `http://127.0.0.1:<port>/api/...` on that single server — not from extra copies on other ports.
+
+## Closing
+
+User closes servers with `STOP.bat` or `python tools/efb_ctl.py stop`. Prefer that over hunting Cursor terminal tabs. Do not leave orphaned `server.py` processes when finishing a session that started one, unless the user asked to keep it running.

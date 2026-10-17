@@ -23,12 +23,15 @@ function setRenderMode(mode) {
   ensurePaintMotion();
 }
 
-const MOTION_MAX_MS = 2000;
+/** Cover BATC ~2.4s position steps (+margin) so the playhead stays in-buffer. */
+const MOTION_MAX_MS = 3600;
 const MOTION_MIN_MS = 120;
 const MOTION_SNAP_KM = 6;
 const MOTION_STILL_KM = 0.012;
 const MOTION_STILL_GS = 1.2;
 const MOTION_EXTRAP_S = 0.55;
+/** Soften heading-vs-chord mismatch over this many seconds of extrapolation. */
+const MOTION_EXTRAP_BLEND_S = 0.22;
 const MOTION_FRAME_MS = 33;
 
 const motionById = new Map();
@@ -135,7 +138,10 @@ function noteMotion(ac) {
   const dt = now - last.t;
   if (dt > 20) {
     const next = Math.min(MOTION_MAX_MS, Math.max(MOTION_MIN_MS, dt * 1.2));
-    m.delay = m.delay ? m.delay * 0.75 + next * 0.25 : next;
+    // Ratchet: rise fast, decay slowly — shrinking delay jumps the playhead forward.
+    if (!m.delay) m.delay = next;
+    else if (next > m.delay) m.delay = next;
+    else m.delay = m.delay * 0.98 + next * 0.02;
   }
   m.samples.push(stampPose(pose, now));
   if (m.samples.length > 4) m.samples.shift();
@@ -151,6 +157,60 @@ function lerpPose(a, b, u) {
   };
 }
 
+function lonDeltaDeg(a, b) {
+  let d = b - a;
+  if (d > 180) d -= 360;
+  if (d < -180) d += 360;
+  return d;
+}
+
+function velBetweenSamples(a, b) {
+  const dt = (b.t - a.t) / 1000;
+  if (!(dt > 0)) return null;
+  return { dlat: (b.lat - a.lat) / dt, dlon: lonDeltaDeg(a.lon, b.lon) / dt };
+}
+
+function velFromGsHdg(s) {
+  if (!s || (s.gs || 0) < 8 || typeof destFrom !== "function") return { dlat: 0, dlon: 0 };
+  const ll = destFrom(s.lat, s.lon, s.hdg || 0, s.gs / 3600);
+  return { dlat: ll[0] - s.lat, dlon: lonDeltaDeg(s.lon, ll[1]) };
+}
+
+function sampleEndpointVel(samples, i, chord) {
+  const prev = i > 0 ? samples[i - 1] : null;
+  const next = i < samples.length - 1 ? samples[i + 1] : null;
+  if (prev && next) {
+    const v = velBetweenSamples(prev, next);
+    if (v) return v;
+  }
+  if (chord) return chord;
+  return velFromGsHdg(samples[i]);
+}
+
+/** Cubic Hermite in lat / unwrapped lon — continuous velocity at sample knots. */
+function hermitePose(a, b, u, va, vb) {
+  const dt = (b.t - a.t) / 1000;
+  if (!(dt > 0)) return poseFromSample(b);
+  const lon0 = a.lon;
+  const lon1 = a.lon + lonDeltaDeg(a.lon, b.lon);
+  const u2 = u * u;
+  const u3 = u2 * u;
+  const h00 = 2 * u3 - 3 * u2 + 1;
+  const h10 = u3 - 2 * u2 + u;
+  const h01 = -2 * u3 + 3 * u2;
+  const h11 = u3 - u2;
+  let lon = h00 * lon0 + h10 * va.dlon * dt + h01 * lon1 + h11 * vb.dlon * dt;
+  if (lon > 180) lon -= 360;
+  if (lon < -180) lon += 360;
+  return {
+    lat: h00 * a.lat + h10 * va.dlat * dt + h01 * b.lat + h11 * vb.dlat * dt,
+    lon,
+    alt: b.alt,
+    hdg: lerpHdg(a.hdg, b.hdg, u),
+    gs: lerpNum(a.gs || 0, b.gs || 0, u),
+  };
+}
+
 function extrapolatePose(p, dtSec) {
   if (!p || dtSec <= 0 || (p.gs || 0) < 8) return { lat: p.lat, lon: p.lon, alt: p.alt, hdg: p.hdg, gs: p.gs };
   if (typeof destFrom !== "function") return { lat: p.lat, lon: p.lon, alt: p.alt, hdg: p.hdg, gs: p.gs };
@@ -158,6 +218,25 @@ function extrapolatePose(p, dtSec) {
   if (nm < 0.0005) return { lat: p.lat, lon: p.lon, alt: p.alt, hdg: p.hdg, gs: p.gs };
   const ll = destFrom(p.lat, p.lon, p.hdg || 0, nm);
   return { lat: ll[0], lon: ll[1], alt: p.alt, hdg: p.hdg, gs: p.gs };
+}
+
+function extrapolateAlongVel(p, vel, dtSec) {
+  if (!p || dtSec <= 0 || !vel) return poseFromSample(p);
+  let lon = p.lon + vel.dlon * dtSec;
+  if (lon > 180) lon -= 360;
+  if (lon < -180) lon += 360;
+  return {
+    lat: p.lat + vel.dlat * dtSec,
+    lon,
+    alt: p.alt,
+    hdg: p.hdg,
+    gs: p.gs,
+  };
+}
+
+function smoothstep01(t) {
+  const x = Math.max(0, Math.min(1, t));
+  return x * x * (3 - 2 * x);
 }
 
 function poseFromSample(s) {
@@ -179,27 +258,48 @@ function motionPoseAt(id, now) {
   if (!m.delay) m.delay = MOTION_MIN_MS;
   const play = Math.max(m.playT, now - m.delay);
   m.playT = play;
-  let a = samples[0];
-  let b = samples[samples.length - 1];
+  let ai = 0;
+  let bi = samples.length - 1;
   for (let i = 0; i < samples.length - 1; i += 1) {
     if (play <= samples[i + 1].t) {
-      a = samples[i];
-      b = samples[i + 1];
+      ai = i;
+      bi = i + 1;
       break;
     }
-    a = samples[i + 1];
-    b = samples[i + 1];
+    ai = i + 1;
+    bi = i + 1;
   }
+  const a = samples[ai];
+  const b = samples[bi];
   if (play <= a.t) {
     m.pose = poseFromSample(a);
     return m.pose;
   }
-  if (play >= b.t || a === b || !(b.t > a.t)) {
+  if (play >= b.t || ai === bi || !(b.t > a.t)) {
     const extra = Math.min(MOTION_EXTRAP_S, Math.max(0, play - b.t) / 1000);
-    m.pose = extra > 0.02 ? extrapolatePose(b, extra) : poseFromSample(b);
+    if (extra <= 0.02) {
+      m.pose = poseFromSample(b);
+      return m.pose;
+    }
+    // Continue along last chord first, then ease toward heading/gs (avoids kink at sample end).
+    const before = samples.length >= 2 ? samples[samples.length - 2] : null;
+    const chord = before ? velBetweenSamples(before, b) : null;
+    const along = chord ? extrapolateAlongVel(b, chord, extra) : poseFromSample(b);
+    const byHdg = extrapolatePose(b, extra);
+    const w = smoothstep01(extra / MOTION_EXTRAP_BLEND_S);
+    m.pose = {
+      lat: lerpNum(along.lat, byHdg.lat, w),
+      lon: lerpLon(along.lon, byHdg.lon, w),
+      alt: b.alt,
+      hdg: b.hdg,
+      gs: b.gs,
+    };
     return m.pose;
   }
-  m.pose = lerpPose(a, b, (play - a.t) / (b.t - a.t));
+  const chord = velBetweenSamples(a, b);
+  const va = sampleEndpointVel(samples, ai, chord);
+  const vb = sampleEndpointVel(samples, bi, chord);
+  m.pose = hermitePose(a, b, (play - a.t) / (b.t - a.t), va, vb);
   return m.pose;
 }
 

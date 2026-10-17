@@ -2,6 +2,17 @@ let hideTimer = null;
 const FOLLOW_PAUSE_MS = 10000;
 /** After user pan-away, catch-up larger than this uses setView so canvas trails/routes redraw. */
 const FOLLOW_SNAP_PX = 72;
+/**
+ * Accumulated _rawPanBy pane offset (px) before a soft setView commit.
+ * Keeps Leaflet SVG/canvas renderer bounds from going stale mid-follow.
+ */
+const FOLLOW_COMMIT_PX = typeof TOUCH_UI !== "undefined" && TOUCH_UI ? 240 : 200;
+/** Throttle full trail history rebuild during soft follow commits. */
+const FOLLOW_TRAIL_FULL_MS = 4000;
+/** Experimental follow spring frequency (Hz), critically damped. */
+const FOLLOW_SPRING_HZ = 2.2;
+/** Follow pan deadband (px²). */
+const FOLLOW_DEADBAND2 = 0.25;
 let followMe = localStorage.getItem("efb-follow-me") === "1";
 /** Traffic aircraft id when following a non-ownship target; mutually exclusive with followMe. */
 let followAcId = null;
@@ -9,6 +20,21 @@ let followPausedUntil = 0;
 let followMoveLock = 0;
 /** True after a user pause — next follow pan must commit a real map view (restore path/route). */
 let followNeedsViewCommit = false;
+let followSpringVx = 0;
+let followSpringVy = 0;
+let followSpringAt = 0;
+let followTrailFullAt = 0;
+
+function resetFollowSpring() {
+  followSpringVx = 0;
+  followSpringVy = 0;
+  followSpringAt = 0;
+}
+
+function dampFollowSpring(factor) {
+  followSpringVx *= factor;
+  followSpringVy *= factor;
+}
 
 function isPhoneLayout() {
   return document.documentElement.classList.contains("layout-phone");
@@ -135,10 +161,14 @@ function scheduleFollowTiles() {
   }, 220);
 }
 
-/** After a committed setView catch-up: redraw dashed route + altitude path. */
-function refreshFollowOverlays() {
+/**
+ * After setView: restroke live route/trail. full=true also rebuilds coloured history
+ * (user pan-away / large catch-up). Soft pane commits skip that unless throttled due.
+ */
+function refreshFollowOverlays(opts = {}) {
   const ac = typeof followTargetAc === "function" ? followTargetAc() : null;
   if (!ac) return;
+  const full = opts.full === true;
   if (ownRoute) ownRoute._efbOriginKey = "";
   if (selRoute) selRoute._efbOriginKey = "";
   if (typeof trailLive !== "undefined" && trailLive) trailLive._efbOriginKey = "";
@@ -175,7 +205,12 @@ function refreshFollowOverlays() {
       /* ignore */
     }
   }
-  // Force coloured history path to repaint for the new viewport.
+
+  const now = performance.now();
+  const trailDue = now - followTrailFullAt >= FOLLOW_TRAIL_FULL_MS;
+  if (!full && !trailDue) return;
+
+  followTrailFullAt = now;
   if (typeof paintedReconKey !== "undefined") paintedReconKey = null;
   if (typeof paintedLiveSig !== "undefined") paintedLiveSig = "";
   const trailMatch =
@@ -189,22 +224,19 @@ function refreshFollowOverlays() {
   }
 }
 
-function scheduleFollowOverlayRefresh() {
+function scheduleFollowOverlayRefresh(opts = {}) {
   if (followOverlayRefreshTimer) clearTimeout(followOverlayRefreshTimer);
-  // Run twice: once ASAP, once after Leaflet moveend/canvas settle.
   followOverlayRefreshTimer = setTimeout(() => {
     followOverlayRefreshTimer = 0;
     if (!anyFollowActive()) return;
-    refreshFollowOverlays();
-    setTimeout(() => {
-      if (anyFollowActive()) refreshFollowOverlays();
-    }, 120);
+    refreshFollowOverlays(opts);
   }, 0);
 }
 
 /**
  * Subpixel follow pan via Leaflet pane transform — no setView snap.
- * Large catch-ups (after user pan-away) use setView so canvas path/route redraw.
+ * Soft pane-drift commits use a light overlay pass; user catch-up uses full restore.
+ * Experimental: critically damped spring.
  */
 function panFollowToLatLon(lat, lon) {
   if (!Number.isFinite(lat) || !Number.isFinite(lon)) return false;
@@ -212,26 +244,52 @@ function panFollowToLatLon(lat, lon) {
   const target = mapVisibleCenterContainerPoint();
   if (!target) return false;
   const cur = containerPointForLatLon(lat, lon);
-  const dx = cur.x - target.x;
-  const dy = cur.y - target.y;
+  let dx = cur.x - target.x;
+  let dy = cur.y - target.y;
   const dist2 = dx * dx + dy * dy;
-  if (dist2 < 0.0025) return false;
+  const experimental = typeof isExperimentalRender === "function" && isExperimentalRender();
+  const pane =
+    typeof map._getMapPanePos === "function" ? map._getMapPanePos() : null;
+  const paneDrift2 = pane ? pane.x * pane.x + pane.y * pane.y : 0;
+  const paneNeedsCommit = paneDrift2 > FOLLOW_COMMIT_PX * FOLLOW_COMMIT_PX;
+  if (dist2 < FOLLOW_DEADBAND2 && !paneNeedsCommit && !followNeedsViewCommit) {
+    if (experimental) dampFollowSpring(0.7);
+    return false;
+  }
 
-  const snap =
+  const hardSnap =
     followNeedsViewCommit ||
     dist2 > FOLLOW_SNAP_PX * FOLLOW_SNAP_PX ||
     typeof map._rawPanBy !== "function" ||
-    typeof map._getMapPanePos !== "function";
+    !pane;
+  const snap = hardSnap || paneNeedsCommit;
 
   if (snap) {
+    const fullOverlay = hardSnap;
     followNeedsViewCommit = false;
+    if (fullOverlay) resetFollowSpring();
+    else dampFollowSpring(0.85);
     const zoom = map.getZoom();
     const center = mapCenterForPointAtVisibleCenter(lat, lon, zoom);
     withFollowMoveLock(() => {
       map.setView(center, zoom, { animate: false });
     });
-    scheduleFollowOverlayRefresh();
+    scheduleFollowOverlayRefresh({ full: fullOverlay });
     return true;
+  }
+
+  if (experimental) {
+    const now = performance.now();
+    const dt = followSpringAt
+      ? Math.min(0.05, Math.max(0.001, (now - followSpringAt) / 1000))
+      : 1 / 60;
+    followSpringAt = now;
+    const w = Math.PI * 2 * FOLLOW_SPRING_HZ;
+    followSpringVx += (w * w * dx - 2 * w * followSpringVx) * dt;
+    followSpringVy += (w * w * dy - 2 * w * followSpringVy) * dt;
+    dx = followSpringVx * dt;
+    dy = followSpringVy * dt;
+    if (dx * dx + dy * dy < 1e-6) return false;
   }
 
   followMoveLock += 1;
@@ -319,6 +377,7 @@ function selectOwnshipLikeClick() {
 function clearFollowTraffic() {
   if (!followAcId) return;
   followAcId = null;
+  resetFollowSpring();
   paintFollowAcButton();
 }
 
@@ -326,6 +385,7 @@ function setFollowMe(on, opts = {}) {
   followMe = Boolean(on);
   localStorage.setItem("efb-follow-me", followMe ? "1" : "0");
   if (followMe) followAcId = null;
+  resetFollowSpring();
   paintFollowMeButton();
   paintFollowAcButton();
   if (followMe) {
@@ -346,6 +406,7 @@ function setFollowMe(on, opts = {}) {
 /** Follow a traffic aircraft (not ownship). Pass null/false to exit. */
 function setFollowTraffic(id, opts = {}) {
   const next = id || null;
+  resetFollowSpring();
   if (next) {
     if (followMe) {
       followMe = false;

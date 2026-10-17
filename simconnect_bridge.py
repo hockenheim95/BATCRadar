@@ -1,4 +1,4 @@
-"""Direct MSFS SimConnect client: ownship + nearby AI aircraft."""
+"""Direct MSFS SimConnect client: ownship, weather, runway, airport names."""
 
 from __future__ import annotations
 
@@ -18,7 +18,6 @@ from SimConnect.Enum import (
     SIMCONNECT_RECV_EXCEPTION,
     SIMCONNECT_RECV_ID,
     SIMCONNECT_RECV_SIMOBJECT_DATA,
-    SIMCONNECT_SIMOBJECT_TYPE,
 )
 from SimConnect.SimConnect import _library_path
 
@@ -37,8 +36,6 @@ E_FAIL = 0x80004005
 
 DEF_AC = 0
 REQ_USER = 0
-REQ_AI = 1
-REQ_HELI = 2
 
 DEF_GPS = 1
 REQ_GPS = 3
@@ -55,8 +52,6 @@ REQ_POSE = 6
 REQ_METAR_NEAR = 20
 REQ_METAR_STN = 21
 RECV_WEATHER_OBS = int(SIMCONNECT_RECV_ID.SIMCONNECT_RECV_ID_WEATHER_OBSERVATION)
-
-RADIUS_M = 250000
 
 DEF_FAC = 10
 REQ_FAC_BASE = 1000
@@ -174,8 +169,6 @@ def _bind(dll: ctypes.WinDLL) -> None:
         DWORD,
         DWORD,
     ]
-    dll.SimConnect_RequestDataOnSimObjectType.restype = ctypes.c_long
-    dll.SimConnect_RequestDataOnSimObjectType.argtypes = [HANDLE, DWORD, DWORD, DWORD, DWORD]
     dll.SimConnect_AddToFacilityDefinition.restype = ctypes.c_long
     dll.SimConnect_AddToFacilityDefinition.argtypes = [HANDLE, DWORD, LPCSTR]
     dll.SimConnect_RequestFacilityData.restype = ctypes.c_long
@@ -202,11 +195,8 @@ class SimConnectBridge:
         self._lock = threading.Lock()
         self.connected = False
         self.ownship: dict | None = None
-        self.traffic: list[dict] = []
         self.last_error = ""
         self._stop = False
-        self._ai: dict[int, tuple[float, dict]] = {}
-        self._user_id: int | None = None
         self._gps = {"origin": "", "dest": ""}
         self.wx: dict = {}
         self.metar = ""
@@ -215,7 +205,6 @@ class SimConnectBridge:
         self._metar_icao = ""
         self._last_metar_req = 0.0
         self.on_ownship = None
-        self._last_ai_req = 0.0
         self._fac_queue: queue.Queue[str] = queue.Queue()
         self._fac_pending: dict[int, str] = {}
         self._fac_asked: set[str] = set()
@@ -277,11 +266,10 @@ class SimConnectBridge:
             self.airport_names[icao] = name
             self._save_names()
 
-    def snapshot(self) -> tuple[dict | None, list[dict], bool, str]:
+    def snapshot(self) -> tuple[dict | None, bool, str]:
         with self._lock:
             own = dict(self.ownship) if self.ownship else None
-            traffic = [dict(p) for p in self.traffic]
-            return own, traffic, self.connected, self.last_error
+            return own, self.connected, self.last_error
 
     def weather_snapshot(self) -> dict:
         with self._lock:
@@ -306,8 +294,6 @@ class SimConnectBridge:
             with self._lock:
                 self.connected = False
                 self.ownship = None
-                self.traffic = []
-                self._ai = {}
                 self.wx = {}
                 self.metar = ""
                 self.atc_runway = ""
@@ -447,10 +433,7 @@ class SimConnectBridge:
                         exc = ctypes.cast(pp, POINTER(SIMCONNECT_RECV_EXCEPTION)).contents
                         print(f"  SimConnect exception {int(exc.dwException)}", flush=True)
                     continue
-                if recv_id in (
-                    SIMCONNECT_RECV_ID.SIMCONNECT_RECV_ID_SIMOBJECT_DATA,
-                    SIMCONNECT_RECV_ID.SIMCONNECT_RECV_ID_SIMOBJECT_DATA_BYTYPE,
-                ):
+                if recv_id == SIMCONNECT_RECV_ID.SIMCONNECT_RECV_ID_SIMOBJECT_DATA:
                     self._on_object(ctypes.cast(pp, POINTER(SIMCONNECT_RECV_SIMOBJECT_DATA)).contents)
         finally:
             try:
@@ -547,6 +530,9 @@ class SimConnectBridge:
                     pass
             return
 
+        if req != REQ_USER:
+            return
+
         raw = _blob_bytes(msg, sizeof(AircraftBlob))
         if len(raw) < sizeof(AircraftBlob):
             return
@@ -568,37 +554,14 @@ class SimConnectBridge:
             "flight_number": _cstr(blob.flight_number),
             "model": _cstr(blob.model),
             "title": _cstr(blob.title),
+            "gps_origin": self._gps["origin"],
+            "gps_dest": self._gps["dest"],
         }
-
-        if req == REQ_USER:
-            self._user_id = plane["object_id"]
-            with self._lock:
-                plane["gps_origin"] = self._gps["origin"]
-                plane["gps_dest"] = self._gps["dest"]
-                self.ownship = plane
-            cb = self.on_ownship
-            if cb:
-                try:
-                    cb(plane)
-                except Exception:
-                    pass
-            return
-
-        if req in (REQ_AI, REQ_HELI):
-            if self._user_id is not None and plane["object_id"] == self._user_id:
-                return
-            now = time.monotonic()
-            self._ai[plane["object_id"]] = (now, plane)
-            own = self.ownship
-            live = []
-            keep: dict[int, tuple[float, dict]] = {}
-            for oid, (seen, item) in self._ai.items():
-                if now - seen >= 8.0:
-                    continue
-                if own and abs(item["lat"] - own["lat"]) < 0.0004 and abs(item["lon"] - own["lon"]) < 0.0004:
-                    continue
-                keep[oid] = (seen, item)
-                live.append(item)
-            self._ai = keep
-            with self._lock:
-                self.traffic = live
+        with self._lock:
+            self.ownship = plane
+        cb = self.on_ownship
+        if cb:
+            try:
+                cb(plane)
+            except Exception:
+                pass

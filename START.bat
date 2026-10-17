@@ -18,6 +18,9 @@ if errorlevel 1 (
     exit /b 1
   )
 )
+echo  Alte Instanzen beenden (ein Server reicht) ...
+python tools\efb_ctl.py stop
+echo.
 python server.py
 echo.
 pause

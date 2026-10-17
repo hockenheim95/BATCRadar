@@ -1,4 +1,4 @@
-"""BATCRadar: FR24-style UI, live SimConnect ownship and AI."""
+"""BATCRadar: FR24-style UI, BeyondATC traffic, SimConnect ownship fallback."""
 
 from __future__ import annotations
 
@@ -189,7 +189,7 @@ def _sim_tick() -> None:
         if _batc.kick_if_stale(BATC_STALE_S):
             print("  BATC feed stale — reconnecting websocket", flush=True)
 
-    sim_own, _, sim_ok, sim_error = _bridge.snapshot()
+    sim_own, sim_ok, sim_error = _bridge.snapshot()
     batc_ok, batc_rows, batc_error = _batc.snapshot()
 
     others: list[dict] = []

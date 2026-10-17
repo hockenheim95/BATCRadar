@@ -36,6 +36,48 @@ function applyAptTab() {
   if (enrTrafficOn) fitEnrTrafficTable();
 }
 
+let lastPanelIdentityKey = "";
+
+function panelIdentityKey(ac) {
+  if (!ac) return "";
+  return [
+    ac.id || "",
+    ac.callsign || "",
+    ac.airlineIcao || "",
+    ac.airline || "",
+    ac.registration || "",
+    ac.origin || "",
+    ac.dest || "",
+    ac.originName || "",
+    ac.destName || "",
+    ac.type || "",
+    ac.typeName || "",
+    ac.source || "",
+  ].join("|");
+}
+
+function paintPanelIdentity(ac) {
+  if (!ac) return;
+  fillPanelHead(ac);
+  document.getElementById("p-flight-body").hidden = false;
+  const [oBig] = codePair(ac.originIata, ac.origin);
+  const [dBig] = codePair(ac.destIata, ac.dest);
+  setText("p-origin", oBig);
+  setText("p-dest", dBig);
+  setText("p-origin-name", ac.originName || ac.origin || "");
+  setText("p-dest-name", ac.destName || ac.dest || "");
+  lastPanelIdentityKey = panelIdentityKey(ac);
+}
+
+/** Re-bind callsign/airline/airports once when traffic identity enriches (e.g. BATC after SimConnect). */
+function refreshSelectedPanelIfNeeded(ac) {
+  if (!ac || document.getElementById("panel").hidden || panelMode !== "flight") return;
+  if (selectedId !== ac.id && !(ac.isOwnship && selectedId === "ownship")) return;
+  const key = panelIdentityKey(ac);
+  if (!key || key === lastPanelIdentityKey) return;
+  paintPanelIdentity(ac);
+}
+
 function fillPanelHead(ac) {
   selectedId = ac.id;
   document.getElementById("panel").hidden = false;
@@ -475,14 +517,7 @@ function openPanel(ac) {
   const prev = selectedId;
   panelMode = "flight";
   if (ac && (ac.isOwnship || (lastOwn && ac.id === lastOwn.id))) clearFidsPin();
-  fillPanelHead(ac);
-  document.getElementById("p-flight-body").hidden = false;
-  const [oBig] = codePair(ac.originIata, ac.origin);
-  const [dBig] = codePair(ac.destIata, ac.dest);
-  setText("p-origin", oBig);
-  setText("p-dest", dBig);
-  setText("p-origin-name", ac.originName || ac.origin || "");
-  setText("p-dest-name", ac.destName || ac.dest || "");
+  paintPanelIdentity(ac);
   setLiveStats(ac);
   setAirportTimes(ac);
   setProgress(ac);
@@ -503,6 +538,7 @@ function closePanel() {
   const prev = selectedId;
   selectedId = null;
   panelMode = "hidden";
+  lastPanelIdentityKey = "";
   clearFidsPin();
   hideAirlineLogo();
   wxStamp = "";
