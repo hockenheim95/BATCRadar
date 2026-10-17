@@ -415,6 +415,25 @@ def normalize_ownship_gs(plane: dict) -> None:
         plane["gs"] = 0.0
 
 
+def apply_sim_latlon(plane: dict, sim_raw: dict | None) -> bool:
+    """Map position only from SimConnect; leave hdg/alt/gs/meta from BATC."""
+    if not plane or not sim_raw:
+        return False
+    try:
+        lat = float(sim_raw["lat"])
+        lon = float(sim_raw["lon"])
+    except (KeyError, TypeError, ValueError):
+        return False
+    if abs(lat) < 0.001 and abs(lon) < 0.001:
+        return False
+    if not (math.isfinite(lat) and math.isfinite(lon)):
+        return False
+    plane["lat"] = lat
+    plane["lon"] = lon
+    plane["poseSource"] = "simconnect"
+    return True
+
+
 def plane_from_sim(raw: dict, is_own: bool) -> dict:
     icao_type = infer_type(raw.get("model") or "", raw.get("title") or "")
     cat, scale = style_for(icao_type)

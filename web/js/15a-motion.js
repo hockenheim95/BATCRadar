@@ -26,6 +26,8 @@ function setRenderMode(mode) {
 /** Cover BATC ~2.4s position steps (+margin) so the playhead stays in-buffer. */
 const MOTION_MAX_MS = 3600;
 const MOTION_MIN_MS = 120;
+/** Ownship with SimConnect lat/lon: short buffer (~client poll), not multi-s AI delay. */
+const MOTION_OWN_MAX_MS = 480;
 const MOTION_SNAP_KM = 6;
 const MOTION_STILL_KM = 0.012;
 const MOTION_STILL_GS = 1.2;
@@ -33,6 +35,15 @@ const MOTION_EXTRAP_S = 0.55;
 /** Soften heading-vs-chord mismatch over this many seconds of extrapolation. */
 const MOTION_EXTRAP_BLEND_S = 0.22;
 const MOTION_FRAME_MS = 33;
+
+function isOwnshipAc(ac) {
+  return Boolean(ac && (ac.isOwnship || ac.id === "ownship"));
+}
+
+/** Denser map pose from SimConnect — use short motion delay. */
+function ownshipSimPose(ac) {
+  return isOwnshipAc(ac) && ac.poseSource === "simconnect";
+}
 
 const motionById = new Map();
 
@@ -72,6 +83,8 @@ function writePose(ac, p) {
   if (!ac || !validPose(p)) return;
   ac.lat = p.lat;
   ac.lon = p.lon;
+  // Ownship hdg/alt/gs stay BATC (labels + icon); only map lat/lon is motioned.
+  if (isOwnshipAc(ac)) return;
   if (Number.isFinite(p.hdg)) ac.hdg = p.hdg;
 }
 
@@ -111,8 +124,10 @@ function noteMotion(ac) {
   const m = motionById.get(ac.id);
   if (!m || !m.samples.length) {
     snapMotion(ac.id, pose, now);
+    motionState(ac.id).ownSim = ownshipSimPose(ac);
     return;
   }
+  m.ownSim = ownshipSimPose(ac);
   const last = m.samples[m.samples.length - 1];
   if (!sampleChanged(last, pose)) {
     last.alt = pose.alt;
@@ -124,6 +139,7 @@ function noteMotion(ac) {
   const jump = kmBetween([here.lat, here.lon], [pose.lat, pose.lon]);
   if (jump != null && jump > MOTION_SNAP_KM) {
     snapMotion(ac.id, pose, now);
+    motionState(ac.id).ownSim = ownshipSimPose(ac);
     return;
   }
   const stillKm = MOTION_STILL_KM;
@@ -137,12 +153,15 @@ function noteMotion(ac) {
   }
   const dt = now - last.t;
   if (dt > 20) {
-    const next = Math.min(MOTION_MAX_MS, Math.max(MOTION_MIN_MS, dt * 1.2));
+    const maxMs = ownshipSimPose(ac) ? MOTION_OWN_MAX_MS : MOTION_MAX_MS;
+    const next = Math.min(maxMs, Math.max(MOTION_MIN_MS, dt * 1.2));
     // Ratchet: rise fast, decay slowly — shrinking delay jumps the playhead forward.
     if (!m.delay) m.delay = next;
     else if (next > m.delay) m.delay = next;
     else m.delay = m.delay * 0.98 + next * 0.02;
+    if (ownshipSimPose(ac) && m.delay > MOTION_OWN_MAX_MS) m.delay = MOTION_OWN_MAX_MS;
   }
+  m.ownSim = ownshipSimPose(ac);
   m.samples.push(stampPose(pose, now));
   if (m.samples.length > 4) m.samples.shift();
 }
@@ -256,6 +275,7 @@ function motionPoseAt(id, now) {
     return m.pose;
   }
   if (!m.delay) m.delay = MOTION_MIN_MS;
+  if (m.ownSim && m.delay > MOTION_OWN_MAX_MS) m.delay = MOTION_OWN_MAX_MS;
   const play = Math.max(m.playT, now - m.delay);
   m.playT = play;
   let ai = 0;

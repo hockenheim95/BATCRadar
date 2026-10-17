@@ -36,4 +36,4 @@ Nicht ins ZIP / nicht committen: `data\procs`, Tile-Caches, `archive`, `.venv`.
 2. `START.bat`
 3. URL aus der Konsole öffnen.
 
-Traffic und Ownship: BeyondATC (Port 41717). SimConnect für Prozeduren und als Fallback.
+Traffic: BeyondATC (Port 41717). Ownship-Map-Position/Spur: SimConnect; Heading/Höhe/GS und Meta: BATC. SimConnect auch für Prozeduren und als Ownship-Fallback ohne BATC-Player.

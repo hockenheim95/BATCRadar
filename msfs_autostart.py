@@ -142,6 +142,63 @@ def _entry_matches(addon: ET.Element, exe: Path) -> bool:
     return _norm_path(path) == _norm_path(exe)
 
 
+def _entry_active(addon: ET.Element) -> bool:
+    """User intent: a non-disabled BATCRadar Launch.Addon (path may be stale)."""
+    return not _is_disabled(addon)
+
+
+def _needs_heal(ours: list[ET.Element], exe: Path) -> bool:
+    """True if any active addon exists and the on-disk state is not a single matching entry."""
+    active = [a for a in ours if _entry_active(a)]
+    if not active:
+        return False
+    return not (len(ours) == 1 and _entry_matches(ours[0], exe))
+
+
+def _write_our_addon(root: ET.Element, exe: Path) -> None:
+    for addon in _our_addons(root):
+        root.remove(addon)
+    addon = ET.SubElement(root, "Launch.Addon")
+    ET.SubElement(addon, "Name").text = ADDON_NAME
+    ET.SubElement(addon, "Disabled").text = "False"
+    ET.SubElement(addon, "Path").text = str(exe)
+
+
+def _heal_target(target: dict[str, Any], exe: Path) -> bool:
+    """Rewrite Path to current exe when autostart is already on (stale install folder).
+
+    Returns True if exe.xml was written.
+    """
+    path: Path = target["path"]
+    if not path.is_file():
+        return False
+    root = _load_root(path)
+    ours = _our_addons(root)
+    if not _needs_heal(ours, exe):
+        return False
+    _write_our_addon(root, exe)
+    _write_xml(path, root)
+    return True
+
+
+def heal_paths() -> None:
+    """Best-effort: point existing enabled Launch.Addon entries at this EXE.
+
+    Call on frozen startup (and from status) so ZIP updates in a new folder keep
+    MSFS autostart without the user toggling the checkbox again.
+    """
+    if not is_frozen():
+        return
+    exe = current_exe()
+    if exe is None:
+        return
+    for t in _managed_targets():
+        try:
+            _heal_target(t, exe)
+        except (OSError, ET.ParseError, ValueError):
+            pass
+
+
 def _read_target(target: dict[str, Any], exe: Path | None) -> dict[str, Any]:
     path: Path = target["path"]
     info: dict[str, Any] = {
@@ -162,7 +219,8 @@ def _read_target(target: dict[str, Any], exe: Path | None) -> dict[str, Any]:
             return info
         root = _load_root(path)
         ours = _our_addons(root)
-        info["enabled"] = any(_entry_matches(a, exe) for a in ours)
+        # Intent: any non-disabled BATCRadar entry counts as on (heal fixes Path).
+        info["enabled"] = any(_entry_active(a) for a in ours)
     except (OSError, ET.ParseError, ValueError) as exc:
         info["ok"] = False
         info["error"] = str(exc)
@@ -198,13 +256,11 @@ def _set_target(target: dict[str, Any], exe: Path, enabled: bool) -> dict[str, A
     }
     try:
         root = _load_root(path)
-        for addon in _our_addons(root):
-            root.remove(addon)
         if enabled:
-            addon = ET.SubElement(root, "Launch.Addon")
-            ET.SubElement(addon, "Name").text = ADDON_NAME
-            ET.SubElement(addon, "Disabled").text = "False"
-            ET.SubElement(addon, "Path").text = str(exe)
+            _write_our_addon(root, exe)
+        else:
+            for addon in _our_addons(root):
+                root.remove(addon)
         _write_xml(path, root)
         # Verify from disk
         verified = _read_target(target, exe)
@@ -227,6 +283,7 @@ def _set_target(target: dict[str, Any], exe: Path, enabled: bool) -> dict[str, A
 
 def status() -> dict[str, Any]:
     """Verified autostart state. exe.xml is the only source of truth."""
+    heal_paths()
     frozen = is_frozen()
     exe = current_exe()
     managed = _managed_targets()

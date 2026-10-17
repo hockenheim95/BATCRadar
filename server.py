@@ -29,6 +29,7 @@ from navdata import warmup as warmup_navdata
 from parking import attach_gate
 from parking import warmup as warmup_parking
 from planes import (
+    apply_sim_latlon,
     attach_flight_iata,
     clear_flightplan_path_cache,
     ensure_flightplan_paths,
@@ -215,6 +216,9 @@ def _sim_tick() -> None:
             ownship = plane_from_batc(player_raw, paths=True)
             ownship["id"] = "ownship"
             ownship["isOwnship"] = True
+            # Map marker + trail: denser SimConnect lat/lon; hdg/alt/gs/meta stay BATC.
+            if sim_ok and sim_own:
+                apply_sim_latlon(ownship, sim_own)
         except Exception as exc:
             print(f"  BATC ownship skip: {exc!r}", flush=True)
             ownship = None
@@ -548,6 +552,8 @@ def main() -> None:
 
     # MSFS exe.xml (and double-clicks) must not spawn a second Waitress.
     single_instance.claim_or_exit(PORT)
+    # Point existing Launch.Addon Path at this EXE after ZIP updates to a new folder.
+    msfs_autostart.heal_paths()
 
     warmup_navdata()
     warmup_airports()
@@ -564,7 +570,7 @@ def main() -> None:
     print(f"  PC:     http://127.0.0.1:{PORT}")
     print(f"  Tablet: http://{ip}:{PORT}")
     print()
-    print("  Traffic and ownship: BeyondATC (Port 41717). SimConnect only if BATC has no player.")
+    print("  Traffic: BeyondATC (41717). Ownship map pose: SimConnect; labels/meta: BATC.")
     print("  Asobo-Static bleibt draussen. Auch Flieger ausserhalb der Render-Distanz.")
     print()
     print("  Fenster offen lassen. Strg+C zum Beenden.")
