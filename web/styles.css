@@ -243,6 +243,10 @@ html.dark #map {
   height: 18px;
 }
 
+.opt-row.is-disabled {
+  opacity: 0.55;
+}
+
 .opt-action {
   width: 100%;
   margin-top: 0;

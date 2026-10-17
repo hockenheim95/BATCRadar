@@ -53,6 +53,7 @@ map.getContainer().addEventListener(
 document.getElementById("btn-options").addEventListener("click", (ev) => {
   ev.stopPropagation();
   optionsMenu.hidden = !optionsMenu.hidden;
+  if (!optionsMenu.hidden) refreshMsfsAutostart();
   bumpChrome();
 });
 document.getElementById("options").addEventListener("click", (ev) => ev.stopPropagation());
@@ -105,6 +106,63 @@ if (ownColorInput) {
   ownColorInput.addEventListener("input", () => {
     applyOwnColor(ownColorInput.value);
     bumpChrome();
+  });
+}
+
+const msfsAutostartRow = document.getElementById("opt-msfs-autostart-row");
+const msfsAutostartInput = document.getElementById("opt-msfs-autostart");
+let msfsAutostartBusy = false;
+
+function applyMsfsAutostartStatus(data) {
+  if (!msfsAutostartInput) return;
+  const available = !!data?.available;
+  const enabled = !!data?.enabled;
+  msfsAutostartInput.checked = enabled;
+  msfsAutostartInput.disabled = !available || msfsAutostartBusy;
+  if (msfsAutostartRow) {
+    const tip = available
+      ? (data?.exe ? `Writes MSFS exe.xml → ${data.exe}` : "Uses MSFS exe.xml")
+      : data?.error || "Not available";
+    msfsAutostartRow.title = tip;
+    msfsAutostartRow.classList.toggle("is-disabled", !available);
+  }
+}
+
+function refreshMsfsAutostart() {
+  if (!msfsAutostartInput) return;
+  fetch("/api/msfs-autostart", { cache: "no-store" })
+    .then((res) => (res.ok ? res.json() : null))
+    .then((data) => {
+      if (!data) return;
+      applyMsfsAutostartStatus(data);
+    })
+    .catch(() => {});
+}
+
+if (msfsAutostartInput) {
+  refreshMsfsAutostart();
+  msfsAutostartInput.addEventListener("change", async () => {
+    if (msfsAutostartBusy) return;
+    const want = !!msfsAutostartInput.checked;
+    msfsAutostartBusy = true;
+    msfsAutostartInput.disabled = true;
+    try {
+      const res = await fetch("/api/msfs-autostart", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled: want }),
+      });
+      const data = await res.json().catch(() => ({}));
+      applyMsfsAutostartStatus(data);
+      if (!res.ok || !data.ok) {
+        alert(data.error || "Could not update MSFS autostart.");
+      }
+    } catch {
+      alert("Could not update MSFS autostart.");
+    } finally {
+      msfsAutostartBusy = false;
+      refreshMsfsAutostart();
+    }
   });
 }
 

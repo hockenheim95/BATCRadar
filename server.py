@@ -39,6 +39,8 @@ from planes import (
     tz_fallback,
 )
 import settings as app_settings
+import msfs_autostart
+import single_instance
 from simconnect_bridge import SimConnectBridge
 from tiles import logo_png, start_tile_workers, tile_png
 from track_store import TrackStore
@@ -410,6 +412,21 @@ def api_settings_post():
     return _json_bytes({"ok": True, "port": port, "restarting": restarting})
 
 
+@app.get("/api/msfs-autostart")
+def api_msfs_autostart_get():
+    return _json_bytes(msfs_autostart.status())
+
+
+@app.post("/api/msfs-autostart")
+def api_msfs_autostart_post():
+    body = request.get_json(silent=True) or {}
+    if "enabled" not in body:
+        return _json_bytes({"ok": False, "error": "Missing enabled", **msfs_autostart.status()}), 400
+    result = msfs_autostart.set_enabled(bool(body.get("enabled")))
+    status = 200 if result.get("ok") else 400
+    return _json_bytes(result), status
+
+
 @app.get("/api/traffic")
 def api_traffic():
     return _bytes(_wire.get("raw") or b"{}", "application/json; charset=utf-8", _wire.get("gzip"))
@@ -529,6 +546,9 @@ def main() -> None:
     if not WEB_DIR.is_dir():
         raise SystemExit(f"Ordner fehlt: {WEB_DIR}")
 
+    # MSFS exe.xml (and double-clicks) must not spawn a second Waitress.
+    single_instance.claim_or_exit(PORT)
+
     warmup_navdata()
     warmup_airports()
     warmup_airlines()
@@ -556,10 +576,14 @@ def main() -> None:
 
 
 if __name__ == "__main__":
+    quiet = False
     try:
         main()
+    except SystemExit as exc:
+        quiet = int(getattr(exc, "code", 1) or 0) == 0
+        raise
     finally:
-        if getattr(sys, "frozen", False):
+        if getattr(sys, "frozen", False) and not quiet:
             try:
                 input("\n  Taste drücken zum Schließen.")
             except EOFError:
