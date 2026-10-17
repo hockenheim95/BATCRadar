@@ -598,11 +598,13 @@ function toggleFollowForAc(ac) {
   if (!ac) return;
   if (acIsOwnship(ac)) {
     const next = !followMe;
-    setFollowMe(next, { applyZoom: next });
+    // Keep current zoom; only re-center on ownship.
+    setFollowMe(next);
     return;
   }
   const next = followAcId !== ac.id;
-  setFollowTraffic(next ? ac.id : null, { applyZoom: next, ac });
+  // Keep current zoom when engaging traffic follow too.
+  setFollowTraffic(next ? ac.id : null, { ac });
 }
 
 /** Drop traffic-follow when selection changes; keep followMe only on ownship. */

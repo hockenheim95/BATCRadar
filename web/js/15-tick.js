@@ -139,7 +139,7 @@ async function tick() {
           L.DomEvent.stop(ev);
           const current = marker.acData || ac;
           if (current.isOwnship) {
-            setFollowMe(true);
+            // Selection only — follow me stays off unless the user presses Follow me.
             clearFidsPin();
             openPanel(current);
             armTrail(current);

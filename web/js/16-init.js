@@ -5,7 +5,8 @@ if (btnFollowMe) {
   btnFollowMe.addEventListener("click", (ev) => {
     ev.stopPropagation();
     const next = !followMe;
-    setFollowMe(next, { applyZoom: next });
+    // Keep current zoom; only re-center on ownship.
+    setFollowMe(next);
     bumpChrome();
   });
 }
