@@ -3,12 +3,18 @@ const FOLLOW_PAUSE_MS = 10000;
 /** After user pan-away, catch-up larger than this uses setView so canvas trails/routes redraw. */
 const FOLLOW_SNAP_PX = 72;
 /**
- * Accumulated _rawPanBy pane offset (px) before a soft setView commit.
- * Keeps Leaflet SVG/canvas renderer bounds from going stale mid-follow.
+ * Very rare safety valve: only after extreme _rawPanBy drift (px).
+ * Normal follow never setViews just for pane drift — that killed phone perf.
  */
-const FOLLOW_COMMIT_PX = typeof TOUCH_UI !== "undefined" && TOUCH_UI ? 240 : 200;
-/** Throttle full trail history rebuild during soft follow commits. */
-const FOLLOW_TRAIL_FULL_MS = 4000;
+const FOLLOW_RARE_COMMIT_PX = 960;
+/** Throttle full trail history rebuild on hard/rare commits. */
+const FOLLOW_TRAIL_FULL_MS = 8000;
+/** Debounce tile grid refresh while following (ms). */
+const FOLLOW_TILES_MS = typeof TOUCH_UI !== "undefined" && TOUCH_UI ? 900 : 450;
+/** Heal SVG/canvas vectors while following without setView (ms). */
+const FOLLOW_VECTOR_MS = 2500;
+/** Also heal vectors after this much pane drift (px). */
+const FOLLOW_VECTOR_DRIFT_PX = 360;
 /** Experimental follow spring frequency (Hz), critically damped. */
 const FOLLOW_SPRING_HZ = 2.2;
 /** Follow pan deadband (px²). */
@@ -24,11 +30,15 @@ let followSpringVx = 0;
 let followSpringVy = 0;
 let followSpringAt = 0;
 let followTrailFullAt = 0;
+let followVectorAt = 0;
+let followVectorPaneMark = null;
 
 function resetFollowSpring() {
   followSpringVx = 0;
   followSpringVy = 0;
   followSpringAt = 0;
+  followVectorAt = 0;
+  followVectorPaneMark = null;
 }
 
 function dampFollowSpring(factor) {
@@ -85,7 +95,7 @@ function withFollowMoveLock(fn) {
 const FIDS_ZOOM_GROUND = 17;
 const FIDS_ZOOM_AIR = 13;
 const FOLLOW_ZOOM_GROUND = 17;
-const FOLLOW_ZOOM_AIR = 13;
+const FOLLOW_ZOOM_AIR = 11;
 
 function fidsZoomForAc(ac) {
   if (ac && ac.onGround) return FIDS_ZOOM_GROUND;
@@ -158,12 +168,163 @@ function scheduleFollowTiles() {
         }
       }
     });
-  }, 220);
+  }, FOLLOW_TILES_MS);
+}
+
+function markFollowVectorHeartbeat() {
+  followVectorAt = performance.now();
+  followVectorPaneMark =
+    typeof map !== "undefined" && typeof map._getMapPanePos === "function"
+      ? map._getMapPanePos().clone()
+      : null;
+}
+
+/** Collect Leaflet path renderers used by follow overlays (SVG + canvas). */
+function followVectorRenderers() {
+  const out = new Set();
+  const add = (layer) => {
+    if (!layer) return;
+    if (typeof layer._update === "function" && layer._container) out.add(layer);
+    if (layer._renderer) out.add(layer._renderer);
+  };
+  add(ownRoute);
+  add(selRoute);
+  if (typeof trailLive !== "undefined") add(trailLive);
+  if (typeof trailCanvas !== "undefined") add(trailCanvas);
+  if (typeof trailLiveCanvas !== "undefined") add(trailLiveCanvas);
+  if (typeof trail !== "undefined" && trail && typeof trail.eachLayer === "function") {
+    trail.eachLayer((layer) => add(layer));
+  }
+  if (typeof trailLiveGroup !== "undefined" && trailLiveGroup && typeof trailLiveGroup.eachLayer === "function") {
+    trailLiveGroup.eachLayer((layer) => add(layer));
+  }
+  return out;
+}
+
+/** True when the visible map is within marginPx of the renderer clip edge. */
+function followRendererNearClip(renderer, marginPx = 80) {
+  const mapRef = renderer && renderer._map;
+  const b = renderer && renderer._bounds;
+  if (!mapRef || !b) return true;
+  const size = mapRef.getSize();
+  if (!size || !size.x) return true;
+  const corners = [
+    mapRef.containerPointToLayerPoint([-marginPx, -marginPx]),
+    mapRef.containerPointToLayerPoint([size.x + marginPx, -marginPx]),
+    mapRef.containerPointToLayerPoint([-marginPx, size.y + marginPx]),
+    mapRef.containerPointToLayerPoint([size.x + marginPx, size.y + marginPx]),
+  ];
+  for (let i = 0; i < corners.length; i += 1) {
+    if (!b.contains(corners[i])) return true;
+  }
+  return false;
 }
 
 /**
- * After setView: restroke live route/trail. full=true also rebuilds coloured history
- * (user pan-away / large catch-up). Soft pane commits skip that unless throttled due.
+ * Expand renderer viewport only when near clip. SVG: detach → attrs → reattach
+ * so position+viewBox don't paint as two frames (the usual flash).
+ */
+function softUpdateFollowRenderer(renderer) {
+  if (!renderer || !renderer._map) return false;
+  if (renderer._bounds && !followRendererNearClip(renderer)) return false;
+
+  const el = renderer._container;
+  const isSvg = el && el.tagName === "svg";
+  if (!isSvg) {
+    try {
+      if (typeof renderer._update === "function") renderer._update();
+    } catch (_) {
+      /* ignore */
+    }
+    return true;
+  }
+
+  try {
+    L.Renderer.prototype._update.call(renderer);
+  } catch (_) {
+    try {
+      renderer._update();
+    } catch (__) {
+      /* ignore */
+    }
+    return true;
+  }
+
+  const b = renderer._bounds;
+  if (!b) return false;
+  const size = b.getSize();
+  const parent = el.parentNode;
+  const next = el.nextSibling;
+  if (parent) parent.removeChild(el);
+  try {
+    if (!renderer._svgSize || !renderer._svgSize.equals(size)) {
+      renderer._svgSize = size;
+      el.setAttribute("width", size.x);
+      el.setAttribute("height", size.y);
+    }
+    L.DomUtil.setPosition(el, b.min);
+    el.setAttribute("viewBox", [b.min.x, b.min.y, size.x, size.y].join(" "));
+  } finally {
+    if (parent) {
+      if (next) parent.insertBefore(el, next);
+      else parent.appendChild(el);
+    }
+  }
+  return true;
+}
+
+/**
+ * Soft vector heal while raw-panning — no setView, no forceLineRestroke flash.
+ * Viewport only when near clip; light nudge keeps tip current.
+ */
+function refreshFollowVectors() {
+  if (!anyFollowActive()) return;
+  const ac = typeof followTargetAc === "function" ? followTargetAc() : null;
+  if (!ac || !Number.isFinite(ac.lat) || !Number.isFinite(ac.lon)) return;
+
+  for (const renderer of followVectorRenderers()) {
+    softUpdateFollowRenderer(renderer);
+  }
+
+  const id = ac.isOwnship || ac.id === "ownship" ? "ownship" : ac.id;
+  const pose =
+    typeof motionPoseAt === "function" ? motionPoseAt(id, performance.now()) : null;
+  const p =
+    pose && Number.isFinite(pose.lat)
+      ? pose
+      : { lat: ac.lat, lon: ac.lon, alt: ac.alt };
+
+  const line = ac.isOwnship || ac.id === "ownship" ? ownRoute : selRoute;
+  const pts = line && typeof line.getLatLngs === "function" ? line.getLatLngs() : null;
+  const pathMissing = !line || !line._path || !pts || pts.length < 2;
+
+  if (typeof nudgeLiveRoute === "function") {
+    nudgeLiveRoute(ac, p, pathMissing ? { full: true } : undefined);
+  }
+  if (typeof nudgeLiveTrail === "function") nudgeLiveTrail(ac, p);
+
+  markFollowVectorHeartbeat();
+}
+
+/** Time- or drift-based vector heal while raw-panning in follow. */
+function maybeFollowVectorHeartbeat() {
+  if (!anyFollowActive()) return;
+  const now = performance.now();
+  const dueTime = !followVectorAt || now - followVectorAt >= FOLLOW_VECTOR_MS;
+  let dueDrift = !followVectorPaneMark;
+  if (followVectorPaneMark && typeof map._getMapPanePos === "function") {
+    const p = map._getMapPanePos();
+    const dx = p.x - followVectorPaneMark.x;
+    const dy = p.y - followVectorPaneMark.y;
+    dueDrift = dx * dx + dy * dy >= FOLLOW_VECTOR_DRIFT_PX * FOLLOW_VECTOR_DRIFT_PX;
+  }
+  if (!dueTime && !dueDrift) return;
+  refreshFollowVectors();
+}
+
+/**
+ * After hard/rare setView: restroke live route/trail.
+ * full=true also rebuilds coloured history (user pan-away / large catch-up).
  */
 function refreshFollowOverlays(opts = {}) {
   const ac = typeof followTargetAc === "function" ? followTargetAc() : null;
@@ -173,7 +334,7 @@ function refreshFollowOverlays(opts = {}) {
   if (selRoute) selRoute._efbOriginKey = "";
   if (typeof trailLive !== "undefined" && trailLive) trailLive._efbOriginKey = "";
 
-  if (typeof syncRoutes === "function") syncRoutes(ac);
+  if (typeof syncRoutes === "function") syncRoutes(ac, { full: true });
   const id = ac.isOwnship || ac.id === "ownship" ? "ownship" : ac.id;
   const pose =
     typeof motionPoseAt === "function" ? motionPoseAt(id, performance.now()) : null;
@@ -181,7 +342,7 @@ function refreshFollowOverlays(opts = {}) {
     pose && Number.isFinite(pose.lat)
       ? pose
       : { lat: ac.lat, lon: ac.lon, alt: ac.alt };
-  if (typeof nudgeLiveRoute === "function") nudgeLiveRoute(ac, p);
+  if (typeof nudgeLiveRoute === "function") nudgeLiveRoute(ac, p, { full: true });
   if (typeof nudgeLiveTrail === "function") nudgeLiveTrail(ac, p);
   if (typeof forceLineRestroke === "function") {
     forceLineRestroke(ac.isOwnship || ac.id === "ownship" ? ownRoute : selRoute);
@@ -234,9 +395,8 @@ function scheduleFollowOverlayRefresh(opts = {}) {
 }
 
 /**
- * Subpixel follow pan via Leaflet pane transform — no setView snap.
- * Soft pane-drift commits use a light overlay pass; user catch-up uses full restore.
- * Experimental: critically damped spring.
+ * Subpixel follow pan via Leaflet pane transform.
+ * Experimental follow stays on _rawPanBy; setView only for user catch-up / rare drift safety.
  */
 function panFollowToLatLon(lat, lon) {
   if (!Number.isFinite(lat) || !Number.isFinite(lon)) return false;
@@ -251,8 +411,10 @@ function panFollowToLatLon(lat, lon) {
   const pane =
     typeof map._getMapPanePos === "function" ? map._getMapPanePos() : null;
   const paneDrift2 = pane ? pane.x * pane.x + pane.y * pane.y : 0;
-  const paneNeedsCommit = paneDrift2 > FOLLOW_COMMIT_PX * FOLLOW_COMMIT_PX;
-  if (dist2 < FOLLOW_DEADBAND2 && !paneNeedsCommit && !followNeedsViewCommit) {
+  // No frequent soft commits — only an extreme-drift safety valve.
+  const rareCommit = paneDrift2 > FOLLOW_RARE_COMMIT_PX * FOLLOW_RARE_COMMIT_PX;
+
+  if (dist2 < FOLLOW_DEADBAND2 && !followNeedsViewCommit && !rareCommit) {
     if (experimental) dampFollowSpring(0.7);
     return false;
   }
@@ -262,19 +424,17 @@ function panFollowToLatLon(lat, lon) {
     dist2 > FOLLOW_SNAP_PX * FOLLOW_SNAP_PX ||
     typeof map._rawPanBy !== "function" ||
     !pane;
-  const snap = hardSnap || paneNeedsCommit;
 
-  if (snap) {
-    const fullOverlay = hardSnap;
+  if (hardSnap || rareCommit) {
     followNeedsViewCommit = false;
-    if (fullOverlay) resetFollowSpring();
-    else dampFollowSpring(0.85);
+    resetFollowSpring();
     const zoom = map.getZoom();
     const center = mapCenterForPointAtVisibleCenter(lat, lon, zoom);
     withFollowMoveLock(() => {
-      map.setView(center, zoom, { animate: false });
+      map.setView(center, zoom, { reset: true });
     });
-    scheduleFollowOverlayRefresh({ full: fullOverlay });
+    scheduleFollowOverlayRefresh({ full: true });
+    markFollowVectorHeartbeat();
     return true;
   }
 
@@ -299,6 +459,7 @@ function panFollowToLatLon(lat, lon) {
     followMoveLock = Math.max(0, followMoveLock - 1);
   }
   scheduleFollowTiles();
+  maybeFollowVectorHeartbeat();
   return true;
 }
 
@@ -395,8 +556,8 @@ function setFollowMe(on, opts = {}) {
       const zoom = opts.applyZoom ? followZoomForAc(lastOwn) : map.getZoom();
       const center = mapCenterForPointAtVisibleCenter(lastOwn.lat, lastOwn.lon, zoom);
       withFollowMoveLock(() => {
-        // No animate: delayed zoomstart would outlive followMoveLock and pause follow.
-        map.setView(center, zoom, { animate: false });
+        // reset:true clears any prior _rawPanBy offset; avoid animate (locks follow).
+        map.setView(center, zoom, { reset: true });
       });
       followPausedUntil = 0;
     }
@@ -423,7 +584,7 @@ function setFollowTraffic(id, opts = {}) {
       const zoom = opts.applyZoom ? followZoomForAc(ac) : map.getZoom();
       const center = mapCenterForPointAtVisibleCenter(ac.lat, ac.lon, zoom);
       withFollowMoveLock(() => {
-        map.setView(center, zoom, { animate: false });
+        map.setView(center, zoom, { reset: true });
       });
       followPausedUntil = 0;
     }

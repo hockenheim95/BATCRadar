@@ -17,12 +17,13 @@ function flightSignSvg(phase, { large = false } = {}) {
   return `<span class="${wrap}" data-phase="${phase}" aria-hidden="true"><img class="flight-sign-img" alt="" width="96" height="96" decoding="async" src="/img/phase/${file}.png?v=${flightSignVer()}"></span>`;
 }
 
-/** Altitude trend for route phase sign (ground / departing / enroute / approaching). */
+/** Altitude trend for route phase sign (ground / departing / enroute / approaching).
+ * Climb/descent latch once seen from live alt trend; level flight does not snap back to enroute.
+ * Opposite clear vertical rate can still switch climb ↔ descent. Ground clears the latch. */
 const motionSign = new Map();
 const MOTION_ALT_MIN_MS = 1500;
 const MOTION_CLIMB_FPM = 350;
 const MOTION_DESC_FPM = -350;
-const MOTION_LEVEL_FPM = 220;
 
 function isGroundPhaseForSign(ac) {
   if (!ac) return true;
@@ -52,7 +53,7 @@ function flightMotionPhase(ac) {
   }
   let entry = motionSign.get(ac.id);
   if (!entry) {
-    entry = { alt, at: now, rate: 0, phase: "departing" };
+    entry = { alt, at: now, rate: 0, phase: "enroute" };
     motionSign.set(ac.id, entry);
     return entry.phase;
   }
@@ -67,7 +68,6 @@ function flightMotionPhase(ac) {
   let phase = entry.phase;
   if (r > MOTION_CLIMB_FPM) phase = "departing";
   else if (r < MOTION_DESC_FPM) phase = "approaching";
-  else if (Math.abs(r) <= MOTION_LEVEL_FPM) phase = "enroute";
   entry.phase = phase;
   motionSign.set(ac.id, entry);
   return phase;

@@ -4,6 +4,6 @@ globs:
 alwaysApply: true
 ---
 
-When you change the EFB app (UI, map, server, navdata, traffic), increment `VERSION` (semver, currently `0.16.478`). The map shows `v…` bottom-center; `index.html` uses `{{VERSION}}` for cache-bust.
+When you change the EFB app (UI, map, server, navdata, traffic), increment `VERSION` (semver, currently `0.16.494`). The map shows `v…` bottom-center; `index.html` uses `{{VERSION}}` for cache-bust.
 
 In the user-facing reply, always state the new version, e.g. **v0.10.1**.

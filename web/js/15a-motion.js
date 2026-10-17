@@ -399,14 +399,20 @@ function layerPointUnrounded(lat, lon) {
 function strokePathUnrounded(line) {
   if (!line || !line._path) return;
   const latlngs = line.getLatLngs();
-  if (!latlngs || latlngs.length < 2) return;
-  let d = "";
-  for (let i = 0; i < latlngs.length; i += 1) {
+  if (!latlngs || latlngs.length < 2) {
+    line._efbPathPrefix = "";
+    return;
+  }
+  let prefix = "";
+  for (let i = 0; i < latlngs.length - 1; i += 1) {
     const ll = latlngs[i];
     const p = layerPointUnrounded(ll.lat, ll.lng);
-    d += (i ? "L" : "M") + p.x + " " + p.y;
+    prefix += (i ? "L" : "M") + p.x + " " + p.y;
   }
-  line._path.setAttribute("d", d);
+  const last = latlngs[latlngs.length - 1];
+  const end = layerPointUnrounded(last.lat, last.lng);
+  line._efbPathPrefix = prefix;
+  line._path.setAttribute("d", `${prefix}L${end.x} ${end.y}`);
 }
 
 function setMarkerLatLngSmooth(marker, lat, lon) {
@@ -449,11 +455,11 @@ function liveLineAc() {
   return null;
 }
 
+/** Zoom + pixel origin only — pane translate must not force SVG restrokes. */
 function mapStrokeOriginKey() {
   if (typeof map === "undefined" || !map) return "";
   const o = map.getPixelOrigin();
-  const p = typeof map._getMapPanePos === "function" ? map._getMapPanePos() : L.point(0, 0);
-  return `${map.getZoom()}:${o.x},${o.y}:${p.x},${p.y}`;
+  return `${map.getZoom()}:${o.x},${o.y}`;
 }
 
 function writeLineLatLngs(line, pairs) {
@@ -470,12 +476,14 @@ function writeLineLatLngs(line, pairs) {
         changed = true;
       }
     }
-    // After setView/pan the latlngs can match while the SVG `d` is still in old pixels.
+    // After setView the latlngs can match while the SVG `d` is still in old pixels.
     if (!changed && !originChanged) return;
     line._efbOriginKey = originKey;
+    line._efbPathPrefix = "";
     strokePathUnrounded(line);
     return;
   }
+  line._efbPathPrefix = "";
   line.setLatLngs(pairs);
   line._efbOriginKey = originKey;
   strokePathUnrounded(line);
@@ -486,8 +494,9 @@ function forceLineRestroke(line) {
   if (!line || !line._map) return;
   const pts = line.getLatLngs();
   if (!pts || pts.length < 2) return;
-  line._efbOriginKey = "";
+  line._efbPathPrefix = "";
   line.setLatLngs(pts.map((p) => [p.lat, p.lng]));
+  line._efbOriginKey = mapStrokeOriginKey();
   strokePathUnrounded(line);
 }
 
@@ -536,7 +545,7 @@ function nudgeLiveTrail(ac, pose) {
   ]);
 }
 
-function nudgeLiveRoute(ac, pose) {
+function nudgeLiveRoute(ac, pose, opts = {}) {
   if (!ac || !validPose(pose) || hideDestRouteAtDest(ac)) return;
   const dest = destLL(ac);
   if (!dest) return;

@@ -216,7 +216,15 @@ function mapVisible(ac) {
 
 function clearLine(line) {
   const pts = line.getLatLngs();
-  if (!pts || !pts.length) return;
+  if (!pts || !pts.length) {
+    if (line) {
+      line._efbPathPrefix = "";
+      line._efbOriginKey = "";
+    }
+    return;
+  }
+  line._efbPathPrefix = "";
+  line._efbOriginKey = "";
   line.setLatLngs([]);
 }
 
@@ -225,18 +233,6 @@ function atDestField(ac) {
   if (!dest || !ac) return false;
   if (!ac.onGround && (ac.gs || 0) > 40) return false;
   return (kmBetween([ac.lat, ac.lon], dest) || 99) < 8;
-}
-
-function destRouteEndpointsMatch(pts, dest, lat, lon) {
-  if (!pts || pts.length < 2) return false;
-  const a = pts[0];
-  const b = pts[pts.length - 1];
-  return (
-    Math.abs(a.lat - dest[0]) < 1e-6 &&
-    Math.abs(a.lng - dest[1]) < 1e-6 &&
-    Math.abs(b.lat - lat) < 1e-6 &&
-    Math.abs(b.lng - lon) < 1e-6
-  );
 }
 
 function applyDestRouteLine(line, dest, lat, lon) {
@@ -253,7 +249,7 @@ function hideDestRouteAtDest(ac) {
   return st === "taxi" || st === "parked" || st === "pushback";
 }
 
-function setRoute(line, ac) {
+function setRoute(line, ac, opts = {}) {
   const dest = destLL(ac);
   if (!ac || !dest || !Number.isFinite(ac.lat) || !Number.isFinite(ac.lon) || hideDestRouteAtDest(ac)) {
     clearLine(line);
@@ -268,19 +264,18 @@ function setRoute(line, ac) {
       lon = pose.lon;
     }
   }
-  const pts = line.getLatLngs();
-  if (destRouteEndpointsMatch(pts, dest, lat, lon)) return;
+  // Always full GC to dest — one aircraft polyline; writeLineLatLngs no-ops if unchanged.
   applyDestRouteLine(line, dest, lat, lon);
 }
 
-function syncRoutes(ac) {
+function syncRoutes(ac, opts = {}) {
   if (!ac || ac.isOwnship) {
     clearLine(selRoute);
-    setRoute(ownRoute, ac);
+    setRoute(ownRoute, ac, opts);
     return;
   }
   clearLine(ownRoute);
-  setRoute(selRoute, ac);
+  setRoute(selRoute, ac, opts);
 }
 
 const trackCache = new Map();

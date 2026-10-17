@@ -926,13 +926,55 @@ html.dark .flight-sign--route {
   color: #fff;
 }
 
-/* Desktop: Follow sits next to airline/type; phone aside button hidden. */
+/* Desktop: Follow sits in the stats phase row (not in the id-card). */
 html:not(.layout-phone) .btn-follow-ac--aside {
   display: none !important;
 }
 
 html:not(.layout-phone) .panel-head-aside {
   display: contents;
+}
+
+html:not(.layout-phone) .live-meta-row {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: stretch;
+  gap: 0;
+  min-width: 0;
+  padding: 0;
+}
+
+html:not(.layout-phone) .live-meta-row .btn-follow-ac--stats {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  align-self: stretch;
+  margin: 0;
+  padding: 8px 12px;
+  border-radius: 0;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+}
+
+html:not(.layout-phone) .live-meta-row .live-meta {
+  flex: 1 1 auto;
+  grid-column: auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+}
+
+html:not(.layout-phone) .live-meta-row .live-meta[hidden] {
+  display: none !important;
+}
+
+html:not(.layout-phone) .live-meta-row:has(.live-meta[hidden]) .btn-follow-ac--stats {
+  flex: 1 1 auto;
+  width: 100%;
 }
 
 .logo-wrap {
@@ -1839,7 +1881,8 @@ html.layout-phone .mobile-sheet--flight .id-card {
   border-radius: 0;
 }
 
-html.layout-phone .mobile-sheet--flight .stats > .live-meta {
+html.layout-phone .mobile-sheet--flight .stats > .live-meta,
+html.layout-phone .mobile-sheet--flight .stats .live-meta-row {
   display: none !important;
 }
 
@@ -1852,19 +1895,16 @@ html.layout-phone .mobile-sheet--flight .panel-head-aside {
   background: color-mix(in srgb, var(--ink) 6%, var(--card));
 }
 
-html.layout-phone .mobile-sheet--flight .btn-follow-ac--inline {
-  display: none !important;
-}
-
 html.layout-phone .mobile-sheet--flight .btn-follow-ac--aside {
   display: flex;
   align-items: center;
   justify-content: center;
   align-self: stretch;
+  flex: 1 1 0;
   width: 100%;
-  min-height: 36px;
+  min-height: 0;
   margin: 0;
-  padding: 8px 6px;
+  padding: 6px 6px;
   border-radius: 0;
   font-size: 12px;
   font-weight: 800;
@@ -1874,9 +1914,10 @@ html.layout-phone .mobile-sheet--flight .btn-follow-ac--aside {
 }
 
 html.layout-phone .mobile-sheet--flight .panel-head .live-meta {
-  flex: 1 1 auto;
+  flex: 1 1 0;
   width: 100%;
   min-width: 0;
+  min-height: 0;
   max-width: none;
   padding: 6px 8px;
   font-size: clamp(11px, 3.1vw, 13px);
