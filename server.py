@@ -39,6 +39,7 @@ from planes import (
     snap_origin_to_field,
     tz_fallback,
 )
+from pilot_monitoring import PilotMonitor
 import settings as app_settings
 import msfs_autostart
 import single_instance
@@ -84,6 +85,7 @@ except Exception:
 _batc = BatcBridge()
 _tracks = TrackStore()
 _fids = Fids()
+_pm = PilotMonitor()
 
 _lock = threading.Lock()
 _state = {
@@ -237,6 +239,9 @@ def _sim_tick() -> None:
         attach_gate(ownship)
         normalize_ownship_gs(ownship)
         attach_flight_iata(ownship)
+        ownship["pm"] = _pm.update(ownship)
+    else:
+        _pm.reset()
     for plane in others:
         attach_flight_iata(plane)
 

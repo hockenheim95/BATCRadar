@@ -211,11 +211,13 @@ async function tick() {
       noteFieldAltFromAc(you);
       noteMotion(you);
       if (typeof refreshSelectedPanelIfNeeded === "function") refreshSelectedPanelIfNeeded(you);
+      if (typeof updatePilotMonitoring === "function") updatePilotMonitoring(you);
     } else if (lastOwn) {
       forgetMotion(lastOwn.id);
       lastOwn = null;
       ownRoute.setLatLngs([]);
       if (!watchingOther()) closePanel();
+      if (typeof updatePilotMonitoring === "function") updatePilotMonitoring(null);
     }
     if (you && (firstOwn || jumpedFar) && !followMe) focusOwnshipOnMap(you);
     if (you && (firstOwn || jumpedFar) && followMe) {

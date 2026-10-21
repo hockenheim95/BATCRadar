@@ -49,6 +49,9 @@ REQ_RWY = 5
 DEF_POSE = 4
 REQ_POSE = 6
 
+DEF_PM = 5
+REQ_PM = 7
+
 REQ_METAR_NEAR = 20
 REQ_METAR_STN = 21
 RECV_WEATHER_OBS = int(SIMCONNECT_RECV_ID.SIMCONNECT_RECV_ID_WEATHER_OBSERVATION)
@@ -115,6 +118,19 @@ class RwyBlob(Structure):
     _fields_ = [
         ("selected", ctypes.c_char * 32),
         ("airport", ctypes.c_char * 32),
+    ]
+
+
+class PmBlob(Structure):
+    """Pilot-monitoring extras (VS, AGL, flaps, gear, IAS)."""
+
+    _pack_ = 1
+    _fields_ = [
+        ("vs", ctypes.c_double),
+        ("agl", ctypes.c_double),
+        ("flaps", ctypes.c_double),
+        ("gear", ctypes.c_double),
+        ("ias", ctypes.c_double),
     ]
 
 
@@ -202,6 +218,7 @@ class SimConnectBridge:
         self.metar = ""
         self.atc_runway = ""
         self.atc_rwy_airport = ""
+        self._pm: dict = {}
         self._metar_icao = ""
         self._last_metar_req = 0.0
         self.on_ownship = None
@@ -374,6 +391,15 @@ class SimConnectBridge:
         dll.SimConnect_AddToDataDefinition(handle, DEF_RWY, b"ATC RUNWAY SELECTED", b"", dt_s32, 0.0, unused)
         dll.SimConnect_AddToDataDefinition(handle, DEF_RWY, b"ATC RUNWAY AIRPORT NAME", b"", dt_s32, 0.0, unused)
 
+        for name, unit in (
+            (b"VERTICAL SPEED", b"Feet per second"),
+            (b"PLANE ALT ABOVE GROUND", b"Feet"),
+            (b"FLAPS HANDLE INDEX", b"Number"),
+            (b"GEAR HANDLE POSITION", b"Bool"),
+            (b"AIRSPEED INDICATED", b"Knots"),
+        ):
+            dll.SimConnect_AddToDataDefinition(handle, DEF_PM, name, unit, dt_f64, 0.0, unused)
+
         for cmd in (b"OPEN AIRPORT", b"NAME64", b"CLOSE AIRPORT"):
             dll.SimConnect_AddToFacilityDefinition(handle, DEF_FAC, cmd)
         self._fac_asked = set(self.airport_names)
@@ -398,6 +424,7 @@ class SimConnectBridge:
         _request(REQ_GPS, DEF_GPS, SIMCONNECT_PERIOD.SIMCONNECT_PERIOD_SECOND, 0)
         _request(REQ_WX, DEF_WX, SIMCONNECT_PERIOD.SIMCONNECT_PERIOD_SECOND, 0)
         _request(REQ_RWY, DEF_RWY, SIMCONNECT_PERIOD.SIMCONNECT_PERIOD_SECOND, 0)
+        _request(REQ_PM, DEF_PM, SIMCONNECT_PERIOD.SIMCONNECT_PERIOD_SECOND, 0)
 
         print("  SimConnect verbunden.", flush=True)
 
@@ -498,6 +525,21 @@ class SimConnectBridge:
                 self._gps["dest"] = _cstr(blob.next_id)
             return
 
+        if req == REQ_PM:
+            blob = PmBlob.from_buffer_copy(_blob_bytes(msg, sizeof(PmBlob)))
+            pm = {
+                "vs": float(blob.vs) * 60.0,  # fps → fpm
+                "agl": max(0.0, float(blob.agl)),
+                "flaps": int(round(float(blob.flaps))),
+                "gearDown": float(blob.gear) > 0.5,
+                "ias": max(0.0, float(blob.ias)),
+            }
+            with self._lock:
+                self._pm = pm
+                if self.ownship:
+                    self.ownship.update(pm)
+            return
+
         if req == REQ_POSE:
             pose = PoseBlob.from_buffer_copy(_blob_bytes(msg, sizeof(PoseBlob)))
             if abs(pose.lat) < 0.001 and abs(pose.lon) < 0.001:
@@ -521,6 +563,7 @@ class SimConnectBridge:
                 plane["hdg"] = float(pose.hdg) % 360.0
                 plane["simOnGround"] = float(pose.on_ground) > 0.5
                 plane["parkingBrake"] = float(pose.park_brake) > 0.5
+                plane.update(self._pm)
                 self.ownship = plane
             cb = self.on_ownship
             if cb:
@@ -558,6 +601,7 @@ class SimConnectBridge:
             "gps_dest": self._gps["dest"],
         }
         with self._lock:
+            plane.update(self._pm)
             self.ownship = plane
         cb = self.on_ownship
         if cb:

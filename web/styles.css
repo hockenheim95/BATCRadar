@@ -2335,3 +2335,115 @@ html.layout-phone .panel-dot.is-active {
   background: #2563eb;
   transform: scale(1.15);
 }
+
+/* —— Pilot Monitoring HUD —— */
+.pm-hud {
+  position: fixed;
+  left: 12px;
+  bottom: calc(56px + env(safe-area-inset-bottom));
+  width: min(280px, calc(100vw - 24px));
+  max-height: min(42vh, 340px);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: var(--bar);
+  color: #fff;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.28);
+  z-index: 520;
+  pointer-events: auto;
+  overflow: hidden;
+}
+
+.pm-hud[hidden] {
+  display: none !important;
+}
+
+.pm-hud-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.pm-title {
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  opacity: 0.75;
+}
+
+.pm-phase {
+  font-size: 12px;
+  font-weight: 750;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.14);
+}
+
+.pm-live {
+  font-size: 18px;
+  font-weight: 800;
+  line-height: 1.2;
+  letter-spacing: 0.01em;
+}
+
+.pm-checklist {
+  font-size: 12px;
+  font-weight: 650;
+  color: #93c5fd;
+}
+
+.pm-meta {
+  font-size: 11px;
+  font-weight: 600;
+  opacity: 0.78;
+  line-height: 1.35;
+}
+
+.pm-log {
+  display: grid;
+  gap: 3px;
+  overflow: auto;
+  max-height: 9.5em;
+  margin-top: 2px;
+  padding-right: 2px;
+}
+
+.pm-line {
+  font-size: 12px;
+  font-weight: 650;
+  opacity: 0.9;
+}
+
+.pm-line--callout {
+  color: #fff;
+}
+
+.pm-line--info {
+  color: #cbd5e1;
+}
+
+.pm-line--hint {
+  color: #93c5fd;
+}
+
+.pm-line--alert,
+.pm-live.pm-line--alert {
+  color: #fda4af;
+}
+
+html.layout-phone .pm-hud {
+  left: 10px;
+  right: auto;
+  bottom: calc(var(--phone-panel-h, 46vh) + 10px);
+  width: min(240px, calc(100vw - 20px));
+  max-height: min(28vh, 220px);
+  padding: 8px 10px;
+}
+
+html.layout-phone .pm-live {
+  font-size: 15px;
+}
