@@ -265,11 +265,30 @@
               Start with MSFS
               <input type="checkbox" id="opt-msfs-autostart" />
             </label>
+            <label class="opt-row">
+              Pilot Monitoring
+              <input type="checkbox" id="opt-pm" checked />
+            </label>
+            <label class="opt-row">
+              PM voice
+              <input type="checkbox" id="opt-pm-voice" checked />
+            </label>
           </div>
         </div>
       </div>
 
     </div>
+
+    <aside class="pm-hud" id="pm-hud" hidden>
+      <div class="pm-hud-head">
+        <span class="pm-title">PM</span>
+        <span class="pm-phase" id="pm-phase">—</span>
+      </div>
+      <div class="pm-live pm-line--info" id="pm-live">Monitoring…</div>
+      <div class="pm-checklist" id="pm-checklist" hidden></div>
+      <div class="pm-meta" id="pm-meta"></div>
+      <div class="pm-log" id="pm-log" aria-live="polite"></div>
+    </aside>
 
     <script src="vendor/leaflet/leaflet.js?v={{VERSION}}"></script>
     <script src="js/01-icons.js?v={{VERSION}}"></script>
@@ -288,6 +307,7 @@
     <script src="js/14-airport-panel.js?v={{VERSION}}"></script>
     <script src="js/15-tick.js?v={{VERSION}}"></script>
     <script src="js/15a-motion.js?v={{VERSION}}"></script>
+    <script src="js/18-pilot-monitoring.js?v={{VERSION}}"></script>
     <script src="js/16-init.js?v={{VERSION}}"></script>
     <script src="js/17-mobile-layout.js?v={{VERSION}}"></script>
   </body>

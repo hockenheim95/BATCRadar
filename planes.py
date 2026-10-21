@@ -415,6 +415,22 @@ def normalize_ownship_gs(plane: dict) -> None:
         plane["gs"] = 0.0
 
 
+_PM_SIM_KEYS = ("vs", "agl", "flaps", "gearDown", "ias")
+
+
+def apply_sim_pm(plane: dict, sim_raw: dict | None) -> bool:
+    """Copy Pilot-Monitoring SimConnect fields onto ownship (BATC or sim)."""
+    if not plane or not sim_raw:
+        return False
+    touched = False
+    for key in _PM_SIM_KEYS:
+        if key not in sim_raw:
+            continue
+        plane[key] = sim_raw[key]
+        touched = True
+    return touched
+
+
 def apply_sim_latlon(plane: dict, sim_raw: dict | None) -> bool:
     """Map position only from SimConnect; leave hdg/alt/gs/meta from BATC."""
     if not plane or not sim_raw:
@@ -431,6 +447,7 @@ def apply_sim_latlon(plane: dict, sim_raw: dict | None) -> bool:
     plane["lat"] = lat
     plane["lon"] = lon
     plane["poseSource"] = "simconnect"
+    apply_sim_pm(plane, sim_raw)
     return True
 
 
@@ -480,4 +497,5 @@ def plane_from_sim(raw: dict, is_own: bool) -> dict:
     if is_own:
         plane["simOnGround"] = bool(raw.get("simOnGround"))
         plane["parkingBrake"] = bool(raw.get("parkingBrake"))
+        apply_sim_pm(plane, raw)
     return plane
