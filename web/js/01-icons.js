@@ -19,24 +19,43 @@ function applyOwnColor(hex) {
   return next;
 }
 
-function svgAttr(fill) {
-  const ink = "#111111";
-  return `fill="${fill}" stroke="${ink}" stroke-width="2.2" stroke-linejoin="round" stroke-linecap="round" paint-order="stroke fill" style="fill:${fill};stroke:${ink};stroke-width:2.2;forced-color-adjust:none"`;
-}
+/** viewBox 0..80 silhouette paths (same geometry as former inline SVG). */
+const SILHOUETTE_PATHS = {
+  prop: {
+    path: "M40 8c1.6 0 2.8 1.6 2.8 4.6V22l20 4v5L42.8 27v22l11 8.5v5L40 55.5 26.2 62.5v-5l11-8.5V27L17.2 31v-5l20-4V12.6C37.2 9.6 38.4 8 40 8z",
+    ellipses: [
+      [22, 26, 7.5, 3.2],
+      [58, 26, 7.5, 3.2],
+    ],
+  },
+  bizjet: {
+    path: "M40 7c1.7 0 2.9 1.7 2.9 4.8V22l17 8v5L42.9 27v20l9 8v4.8L40 53.2 28.1 59.8V55l9-8V27L20.1 35v-5l17-8V11.8C37.1 8.7 38.3 7 40 7z",
+    ellipses: [
+      [32, 48, 3.1, 6],
+      [48, 48, 3.1, 6],
+    ],
+  },
+  quad: {
+    path: "M40 4c2 0 3.3 2 3.3 6.2V18L76 33.5v5.4L43.3 28.2V50l16 12v5.2L40 59.2 20.7 67.4v-5.2l16-12V28.2L4 38.9v-5.4L36.7 18V10.2C36.7 6 38 4 40 4z",
+    ellipses: [
+      [16, 35, 3.2, 7],
+      [26, 33, 3.2, 7],
+      [54, 33, 3.2, 7],
+      [64, 35, 3.2, 7],
+    ],
+  },
+  twin: {
+    path: "M40 4c2 0 3.3 2 3.3 6.2V18L76 33.5v5.4L43.3 28.2V50l16 12v5.2L40 59.2 20.7 67.4v-5.2l16-12V28.2L4 38.9v-5.4L36.7 18V10.2C36.7 6 38 4 40 4z",
+    ellipses: [
+      [20, 34, 3.4, 7.2],
+      [60, 34, 3.4, 7.2],
+    ],
+  },
+};
 
-function silhouette(shape, fill) {
-  const a = svgAttr(fill);
-  if (shape === "prop") {
-    return `<svg viewBox="0 0 80 80" overflow="visible"><path ${a} d="M40 8c1.6 0 2.8 1.6 2.8 4.6V22l20 4v5L42.8 27v22l11 8.5v5L40 55.5 26.2 62.5v-5l11-8.5V27L17.2 31v-5l20-4V12.6C37.2 9.6 38.4 8 40 8z"/><ellipse ${a} cx="22" cy="26" rx="7.5" ry="3.2"/><ellipse ${a} cx="58" cy="26" rx="7.5" ry="3.2"/></svg>`;
-  }
-  if (shape === "bizjet") {
-    return `<svg viewBox="0 0 80 80" overflow="visible"><path ${a} d="M40 7c1.7 0 2.9 1.7 2.9 4.8V22l17 8v5L42.9 27v20l9 8v4.8L40 53.2 28.1 59.8V55l9-8V27L20.1 35v-5l17-8V11.8C37.1 8.7 38.3 7 40 7z"/><ellipse ${a} cx="32" cy="48" rx="3.1" ry="6"/><ellipse ${a} cx="48" cy="48" rx="3.1" ry="6"/></svg>`;
-  }
-  if (shape === "quad") {
-    return `<svg viewBox="0 0 80 80" overflow="visible"><path ${a} d="M40 4c2 0 3.3 2 3.3 6.2V18L76 33.5v5.4L43.3 28.2V50l16 12v5.2L40 59.2 20.7 67.4v-5.2l16-12V28.2L4 38.9v-5.4L36.7 18V10.2C36.7 6 38 4 40 4z"/><ellipse ${a} cx="16" cy="35" rx="3.2" ry="7"/><ellipse ${a} cx="26" cy="33" rx="3.2" ry="7"/><ellipse ${a} cx="54" cy="33" rx="3.2" ry="7"/><ellipse ${a} cx="64" cy="35" rx="3.2" ry="7"/></svg>`;
-  }
-  return `<svg viewBox="0 0 80 80" overflow="visible"><path ${a} d="M40 4c2 0 3.3 2 3.3 6.2V18L76 33.5v5.4L43.3 28.2V50l16 12v5.2L40 59.2 20.7 67.4v-5.2l16-12V28.2L4 38.9v-5.4L36.7 18V10.2C36.7 6 38 4 40 4z"/><ellipse ${a} cx="20" cy="34" rx="3.4" ry="7.2"/><ellipse ${a} cx="60" cy="34" rx="3.4" ry="7.2"/></svg>`;
-}
+const iconBitmapCache = new Map();
+const ICON_PAD = 4;
+const ICON_INK = "#111111";
 
 function shapeOf(ac) {
   const t = `${ac.type || ""} ${ac.typeName || ""}`.toUpperCase();
@@ -104,16 +123,67 @@ function iconKey(ac, selected) {
   return `${shapeOf(ac)}|${iconSize(ac, selected)}|${own}|${selected ? 1 : 0}`;
 }
 
+function fillFor(ac, selected) {
+  if (ac.isOwnship) return ownColorPref();
+  return selected ? "#2f6bff" : "#f5c518";
+}
+
+function drawSilhouette(ctx, shape, fill) {
+  const def = SILHOUETTE_PATHS[shape] || SILHOUETTE_PATHS.twin;
+  ctx.fillStyle = fill;
+  ctx.strokeStyle = ICON_INK;
+  ctx.lineWidth = 2.2;
+  ctx.lineJoin = "round";
+  ctx.lineCap = "round";
+  const path = new Path2D(def.path);
+  ctx.stroke(path);
+  ctx.fill(path);
+  for (const [cx, cy, rx, ry] of def.ellipses) {
+    ctx.beginPath();
+    ctx.ellipse(cx, cy, rx, ry, 0, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.fill();
+  }
+}
+
+function iconBitmapUrl(shape, px, fill) {
+  const key = `${shape}|${px}|${fill}`;
+  let url = iconBitmapCache.get(key);
+  if (url) return url;
+  const dpr = Math.min(2, Math.max(1, window.devicePixelRatio || 1));
+  const pad = ICON_PAD;
+  const side = px + pad * 2;
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.ceil(side * dpr);
+  canvas.height = Math.ceil(side * dpr);
+  const ctx = canvas.getContext("2d");
+  ctx.scale(dpr, dpr);
+  ctx.clearRect(0, 0, side, side);
+  ctx.save();
+  ctx.shadowColor = "rgba(0,0,0,0.55)";
+  ctx.shadowBlur = 1.5;
+  ctx.shadowOffsetY = 1;
+  ctx.translate(pad, pad);
+  ctx.scale(px / 80, px / 80);
+  drawSilhouette(ctx, shape, fill);
+  ctx.restore();
+  url = canvas.toDataURL("image/png");
+  iconBitmapCache.set(key, url);
+  return url;
+}
+
 function iconFor(ac, selected) {
-  const fill = ac.isOwnship ? ownColorPref() : selected ? "#2f6bff" : "#f5c518";
+  const fill = fillFor(ac, selected);
   const px = iconSize(ac, selected);
   const shape = shapeOf(ac);
   const hdg = displayHdg(ac);
   const origin = (noseFrac(shape) * 100).toFixed(2);
   const tip = px * noseFrac(shape);
+  const src = iconBitmapUrl(shape, px, fill);
+  const cls = `ac-wrap${ac.isOwnship ? " you" : ""}${selected ? " sel" : ""}`;
   return L.divIcon({
     className: "ac-icon",
-    html: `<div class="ac-wrap${ac.isOwnship ? " you" : ""}${selected ? " sel" : ""}" style="width:${px}px;height:${px}px;transform-origin:50% ${origin}%;transform:rotate(${hdg}deg)">${silhouette(shape, fill)}</div>`,
+    html: `<img class="${cls}" width="${px}" height="${px}" alt="" draggable="false" src="${src}" style="width:${px}px;height:${px}px;transform-origin:50% ${origin}%;transform:rotate(${hdg}deg)">`,
     iconSize: [px, px],
     iconAnchor: [px / 2, tip],
   });
@@ -161,4 +231,3 @@ function refreshIcon(marker) {
     }
   });
 }
-
