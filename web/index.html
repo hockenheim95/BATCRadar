@@ -252,6 +252,14 @@
                 <option value="experimental">Experimental</option>
               </select>
             </label>
+            <!-- EFB_CANVAS_MARKERS: optional Markers backend (dom | canvas). Remove with 02a-canvas-markers.js. -->
+            <label class="opt-row" title="Canvas draws all planes on one layer (lighter on weak tablets). DOM is the classic Leaflet markers.">
+              Markers
+              <select id="opt-markers">
+                <option value="dom" selected>DOM (default)</option>
+                <option value="canvas">Canvas (low-RAM)</option>
+              </select>
+            </label>
             <label class="opt-row">
               Color user aircraft
               <input type="color" id="opt-own-color" value="#e11d48" />
@@ -274,6 +282,8 @@
     <script src="vendor/leaflet/leaflet.js?v={{VERSION}}"></script>
     <script src="js/01-icons.js?v={{VERSION}}"></script>
     <script src="js/02-map.js?v={{VERSION}}"></script>
+    <!-- EFB_CANVAS_MARKERS: optional; delete this script + opt-markers to remove the feature -->
+    <script src="js/02a-canvas-markers.js?v={{VERSION}}"></script>
     <script src="js/03-flightplan-routes.js?v={{VERSION}}"></script>
     <script src="js/04-track-history.js?v={{VERSION}}"></script>
     <script src="js/05-trail-altitude.js?v={{VERSION}}"></script>

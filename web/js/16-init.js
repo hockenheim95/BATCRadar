@@ -101,6 +101,16 @@ if (renderSelect) {
   });
 }
 
+// EFB_CANVAS_MARKERS — Options → Markers (dom | canvas). Remove with 02a-canvas-markers.js.
+const markersSelect = document.getElementById("opt-markers");
+if (markersSelect && typeof markerBackendPref === "function") {
+  markersSelect.value = markerBackendPref();
+  markersSelect.addEventListener("change", () => {
+    if (typeof setMarkerBackend === "function") setMarkerBackend(markersSelect.value);
+    bumpChrome();
+  });
+}
+
 const ownColorInput = document.getElementById("opt-own-color");
 if (ownColorInput) {
   ownColorInput.value = applyOwnColor(ownColorPref());

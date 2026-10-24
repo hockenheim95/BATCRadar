@@ -191,6 +191,13 @@ function iconFor(ac, selected) {
 
 function applyHeading(marker, ac) {
   const hdg = displayHdg(ac);
+  // EFB_CANVAS_MARKERS: canvas stubs have no DOM wrap — only store heading + redraw.
+  if (marker && marker._efbCanvas) {
+    if (marker.hdgDrawn === hdg) return;
+    marker.hdgDrawn = hdg;
+    if (typeof scheduleCanvasMarkersRedraw === "function") scheduleCanvasMarkersRedraw();
+    return;
+  }
   if (marker.hdgDrawn === hdg && marker._acWrap && marker._acWrap.isConnected) return;
   let wrap = marker._acWrap;
   if (!wrap || !wrap.isConnected) {
@@ -212,6 +219,17 @@ function refreshIcon(marker) {
   if (!ac) return;
   const sel = ac.id === selectedId;
   const key = iconKey(ac, sel);
+  // EFB_CANVAS_MARKERS
+  if (marker && marker._efbCanvas) {
+    if (marker.iconKey === key) {
+      applyHeading(marker, ac);
+      return;
+    }
+    marker.iconKey = key;
+    marker.hdgDrawn = displayHdg(ac);
+    if (typeof scheduleCanvasMarkersRedraw === "function") scheduleCanvasMarkersRedraw();
+    return;
+  }
   if (marker.iconKey === key) {
     applyHeading(marker, ac);
     return;

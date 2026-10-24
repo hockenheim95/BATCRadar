@@ -443,6 +443,11 @@ function setMarkerLatLngSmooth(marker, lat, lon) {
   } else {
     marker._latlng = L.latLng(lat, lon);
   }
+  // EFB_CANVAS_MARKERS: stubs are not Leaflet markers — pose update + canvas redraw only.
+  if (marker._efbCanvas) {
+    if (typeof scheduleCanvasMarkersRedraw === "function") scheduleCanvasMarkersRedraw();
+    return;
+  }
   if (!marker._map || !marker._icon) return;
   const origin = map.getPixelOrigin();
   const pt = layerPointUnrounded(lat, lon);
@@ -660,6 +665,8 @@ function paintTrafficNow(now) {
     }
     placeMarkerPose(marker, ac, pose);
   }
+  // EFB_CANVAS_MARKERS: coalesce redraw after bulk pose updates (incl. culled-only moves).
+  if (typeof scheduleCanvasMarkersRedraw === "function") scheduleCanvasMarkersRedraw();
 }
 
 function paintPeriodMs() {

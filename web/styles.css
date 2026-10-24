@@ -1479,6 +1479,11 @@ html.dark .leaflet-control-attribution {
   will-change: transform;
 }
 
+/* EFB_CANVAS_MARKERS: single overlay for optional canvas aircraft backend */
+.efb-ac-canvas {
+  z-index: 600;
+}
+
 .apt-fids {
   flex: 1 1 auto;
   min-height: 0;
